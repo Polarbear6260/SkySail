@@ -174,3 +174,34 @@ state=landed  alt=0.71~0.85 m   pad_alt=0.71~0.91 m   rel_v=0.04~0.12 m/s
 
 改三处：`x650_sea.sdf` 加 dock；`11_run_moving_landing.sh` 改 `PX4_GZ_MODEL_POSE`；
 `moving_landing.py` 加 `cruise_alt` 并加位置+速度前馈。
+
+## 决定性下降 + 真实上锁（2026-11-02 02:07）
+
+参考了同类系统（[deck-velocity feedforward + 低相对运动窗口](https://github.com/Manas-arumalla/drone-landing-moving-platform/blob/main/src/drone_landing/autopilot.py)、
+[PX4 precision landing](https://docs.px4.io/v1.13/zh/advanced_features/precland)）后做了四点改动：
+
+1. **进场高度 1.0 → 0.5 m**（少在头上磨蹭）
+2. **下降段改用 SkySail 的 `touchdown` 阶段**（位置/速度权重加倍，动作更硬）
+3. **恒定 0.6 m/s 下降前馈**（参考速度 = 甲板速度 + 下降率），不靠误差慢慢挤
+4. **压紧段改加速度控制 + 甲板速度前馈**（位置环追移动目标有稳态滞后，会滑到板边）
+
+**修掉的关键 bug：坐标系错位。** `alt` 是 PX4 本体系（原点 = 出生点，甲板高度），
+`pad_alt` 是世界的绝对高度（0.85 m），两者差一个恒定 0.85 m —— 所以之前所谓的
+"压到板面"其实一直在甲板上方 0.85 m，飞机当然只悬停。现在 `on_pad_pose` 里减掉这个偏移。
+
+**实测（最后一轮）**：
+
+```
+到达板面上方（水平 0.13 m）→ 接触（相对高度 0.06 m）→ 坐实（+0.09 m）→ 强制上锁
+Armed by external ×1   Disarmed by ×1   无 failsafe
+```
+
+**遗留**：上锁后机体从平坦的落点板上**滑出去掉进海里**（视频可见甲板空了）。
+加的那圈"挡边"其实是实心圆盘（把红板盖住了），不是环，所以没有拦挡作用。
+下一轮要做成真正的环形挡边 + 提高摩擦，或者加一个"系留"逻辑（上锁前先降到底）。
+
+## 下一轮（已确认）
+
+1. 固定 dock（离船 15–20 m）起飞 → 爬升 6 m 巡航 → 高空接近 → 下降着陆
+2. 落点板改成真正的环形挡边（外径 0.60 / 内径 0.56），摩擦 1.5
+3. 上锁判定加"已降到底"（相对高度 < 0.05）再停机，避免在半空停机后摔落
