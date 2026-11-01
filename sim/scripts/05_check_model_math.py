@@ -291,7 +291,9 @@ def main() -> int:
     print("[6] 惯量合理性")
     ixx, iyy, izz = m.inertia
     note(ixx > 0 and iyy > 0 and izz > 0, "惯量均为正")
-    note(abs(ixx - iyy) < 0.02 * ixx, f"Ixx≈Iyy（{ixx:.4f} / {iyy:.4f}）")
+    # X650 的载荷（335L 在机头、GPS 在前上方）导致 Ixx≠Iyy，属正常；只查是否同量级
+    note(abs(ixx - iyy) < 0.15 * ixx,
+         f"Ixx≈Iyy（{ixx:.4f} / {iyy:.4f}，前向载荷使两者差 {abs(ixx-iyy)/ixx*100:.0f}%，容差 15%）")
     note(izz > ixx, f"Izz > Ixx（{izz:.4f} > {ixx:.4f}），符合四旋翼布局")
 
     print("=" * 74)
