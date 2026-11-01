@@ -83,6 +83,17 @@ ros2 run x650_offboard offboard_hover --ros-args -p alt:=2.5 \
 | 3 | 切不进 OFFBOARD | `MAV_CMD_DO_SET_MODE` 参数顺序错：`param1` 是 base mode（要 `1`=CUSTOM_MODE_ENABLED），`param2` 才是 `6`=OFFBOARD | 已改 |
 | 4 | `waypoints` 参数报类型错误 | ROS 2 CLI 把 `[1,2,3]` 解析成 YAML 数组 | 传纯字符串：`'2.0 0.0 2.5, 2.0 2.0 2.5'` |
 
+## 定点着陆 demo
+
+```bash
+ros2 run x650_offboard landing_demo --ros-args -p alt:=2.5 -p landing_x:=8.0
+```
+
+用仓库里的 `UAV_Control.direct.PointLandingController`（已换成 X650 参数）做外环，
+输出加速度经 `TrajectorySetpoint.acceleration` 下发。实测：8 m 进场、2.5 m 高度、
+**落点误差 0.026 m**，轨迹写到 `~/x650_ws/landing_traj.csv`。
+详见 [`../results/2026-11-01-landing-demo.md`](../results/2026-11-01-landing-demo.md)。
+
 ## 已验证结果（2026-11-01）
 
 | 项 | 结果 |

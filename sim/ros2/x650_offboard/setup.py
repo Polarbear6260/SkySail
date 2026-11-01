@@ -19,6 +19,7 @@ setup(
     entry_points={
         "console_scripts": [
             "offboard_hover = x650_offboard.offboard_hover:main",
+            "landing_demo = x650_offboard.landing_demo:main",
         ],
     },
 )
