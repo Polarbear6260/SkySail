@@ -84,3 +84,37 @@ python3 scripts/10_move_platform.py --csv logs/ship.csv
 可能原因（待查）：OFFBOARD 控制模式在“加速度→位置”切换时被判定异常；或
 `vehicle_control_mode` 掉出 OFFBOARD。下一步应打印 `vehicle_status.nav_state` 与
 `failsafe_flags`，并考虑全程只用一种控制模式或在接触后直接切 `AUTO.LAND`。
+
+## 暂停点（2026-11-01 19:20）
+
+**下坠的根因找到了：不是控制模式，是电池失效保护。**
+
+```
+WARN  [failsafe] Failsafe activated
+INFO  [tone_alarm] battery warning (fast)
+INFO  [navigator] RTL: start return at 7 m
+INFO  [navigator] RTL: land at destination
+```
+
+飞机被 RTL 带回起飞点降落，但船已经开走 → 落进海里（水面无碰撞）→ 一路下坠。
+
+处置：把 SITL 电池相关参数改成“不触发失效保护”，已确认生效：
+
+| 参数 | 值 | 作用 |
+|---|---|---|
+| `NAV_DLL_ACT` | 0 | 无地面站也能解锁 |
+| `SIM_BAT_DRAIN` | 36000 | 10 小时才放完电 |
+| `COM_LOW_BAT_ACT` | 0 | 低电量只告警、不 RTL |
+| `SIM_BAT_MIN_PCT` | 50 | 保持默认 |
+
+**注意**：最后一次运行时，参数是在 SITL 启动后、起飞前设的，但日志里仍有 `battery warning (fast)`，
+需要下一轮**先设参数、再确认无告警**，然后才起飞验证。
+
+**下次恢复的命令**：
+
+```bash
+cd /home/green/文档/deepseek-harness/default-workspace/px4-gz-sim
+./logs/run_ml2.sh          # 清场 → agent → SITL → 设参数 → 船 → 移动着陆
+```
+
+当前最好成绩（相对移动落点板）：**水平误差 0.13–0.23 m，相对高度 0.07–0.14 m**。
