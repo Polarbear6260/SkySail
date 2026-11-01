@@ -20,6 +20,7 @@ setup(
         "console_scripts": [
             "offboard_hover = x650_offboard.offboard_hover:main",
             "landing_demo = x650_offboard.landing_demo:main",
+            "moving_landing = x650_offboard.moving_landing:main",
         ],
     },
 )

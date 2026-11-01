@@ -63,3 +63,24 @@ python3 scripts/10_move_platform.py --csv logs/ship.csv
    （可从 `10_move_platform.py` 的 CSV 真值、或 gz 的 `pose/info` 话题、或 ros_gz_bridge 取）
 3. **触地判定改成相对量**：相对平台的水平距离 + 相对垂直速度 + 相对水平速度，
    而不是对地速度
+
+## 移动着陆联调记录（2026-11-01）
+
+**已打通**：
+
+- 平台位姿 → ROS 2：驱动以 50 Hz 发布 `/ship/pad_pose`、`/ship/pad_twist`（ENU）
+- 控制器：`moving_landing` 节点把 ENU→NED，用 SkySail LQR（参考速度 = 平台速度）追板
+- 起飞：飞机由 `PX4_GZ_MODEL_POSE="0,0,0.80,0,0,0"` 生成在甲板上，从移动甲板起飞
+
+**连续三次跑出的接触数据**（相对移动落点板）：
+
+| 指标 | 第 1 次 | 第 2 次 | 第 3 次 |
+|---|---|---|---|
+| 相对高度 | 0.07 m | 0.11 m | 0.14 m |
+| 相对速度 | 0.29 m/s | 0.30 m/s | 0.28 m/s |
+| 水平误差 | 0.13 m | 0.15 m | 0.13 m |
+
+**未解决**：接触后 PX4 触发 `Failsafe activated`，飞机随后穿过甲板下坠（不是落在船上）。
+可能原因（待查）：OFFBOARD 控制模式在“加速度→位置”切换时被判定异常；或
+`vehicle_control_mode` 掉出 OFFBOARD。下一步应打印 `vehicle_status.nav_state` 与
+`failsafe_flags`，并考虑全程只用一种控制模式或在接触后直接切 `AUTO.LAND`。

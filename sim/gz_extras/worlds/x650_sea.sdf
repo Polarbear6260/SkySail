@@ -97,8 +97,8 @@
           <material><diffuse>0.55 0.5 0.45 1</diffuse></material>
         </visual>
         <collision name="deck_collision">
-          <pose>0 0 0.42 0 0 0</pose>
-          <geometry><box><size>4.0 1.6 0.04</size></box></geometry>
+          <pose>0 0 0.30 0 0 0</pose>
+          <geometry><box><size>4.0 1.6 0.30</size></box></geometry>
         </collision>
 
         <!-- 驾驶舱 -->
@@ -130,8 +130,8 @@
           </material>
         </visual>
         <collision name="pad_collision">
-          <pose>0.3 0 0.45 0 0 0</pose>
-          <geometry><cylinder><radius>0.55</radius><length>0.02</length></cylinder></geometry>
+          <pose>0.3 0 0.40 0 0 0</pose>
+          <geometry><cylinder><radius>0.55</radius><length>0.30</length></cylinder></geometry>
         </collision>
       </link>
     </model>

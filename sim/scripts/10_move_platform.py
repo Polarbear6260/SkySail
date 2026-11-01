@@ -32,6 +32,15 @@ import gz.msgs10.boolean_pb2 as boolean_pb2
 import gz.msgs10.pose_pb2 as pose_pb2
 import gz.transport13 as gz_transport
 
+# 可选：把落点板位姿/速度发到 ROS 2（控制器用）；没有 ROS 环境时自动跳过
+try:
+    import rclpy
+    from geometry_msgs.msg import PoseStamped, TwistStamped
+    from rclpy.node import Node as RclNode
+    HAS_ROS = True
+except Exception:  # noqa: BLE001
+    HAS_ROS = False
+
 PAD_LOCAL = (0.30, 0.0, 0.45)      # 落点板中心（船体坐标系）
 SHIP_Z = 0.36                      # 船体基准高度（吃水线以上）
 
@@ -69,7 +78,37 @@ def main() -> int:
     ap.add_argument("--pitch-deg", type=float, default=2.0)
     ap.add_argument("--rate", type=float, default=50.0, help="set_pose 频率 Hz")
     ap.add_argument("--csv", default="")
+    ap.add_argument("--delay", type=float, default=0.0,
+                    help="起航前的等待秒数（让飞机在静止甲板上起飞）")
+    ap.add_argument("--start-yaw", type=float, default=0.0,
+                    help="初始航向 rad（用 π 让船从远处出发）")
+    ap.add_argument("--no-ros", action="store_true", help="不发布 ROS 话题")
     args = ap.parse_args()
+
+    pub = None
+    rnode = None
+    if HAS_ROS and not args.no_ros:
+        rclpy.init()
+        rnode = RclNode("ship_driver")
+        pub_pose = rnode.create_publisher(PoseStamped, "/ship/pad_pose", 10)
+        pub_twist = rnode.create_publisher(TwistStamped, "/ship/pad_twist", 10)
+        pub = True          # 之前这里漏了，导致发布分支被跳过
+        print("ROS 话题已启用：/ship/pad_pose, /ship/pad_twist")
+
+        def publish_pad(px, py, pz, vx, vy, vz, q):
+            now = rnode.get_clock().now().to_msg()
+            ps = PoseStamped()
+            ps.header.stamp = now
+            ps.header.frame_id = "map"
+            ps.pose.position.x, ps.pose.position.y, ps.pose.position.z = px, py, pz
+            ps.pose.orientation.x, ps.pose.orientation.y = q[0], q[1]
+            ps.pose.orientation.z, ps.pose.orientation.w = q[2], q[3]
+            ts = TwistStamped()
+            ts.header.stamp = now
+            ts.header.frame_id = "map"
+            ts.twist.linear.x, ts.twist.linear.y, ts.twist.linear.z = vx, vy, vz
+            pub_pose.publish(ps)
+            pub_twist.publish(ts)
 
     node = gz_transport.Node()
     svc = f"/world/{args.world}/set_pose"
@@ -101,7 +140,8 @@ def main() -> int:
                 continue
             next_tick += period
 
-            yaw = omega_ship * t
+            t_move = max(0.0, t - args.delay)          # 起航计时
+            yaw = args.start_yaw + omega_ship * t_move
             x = args.radius * math.sin(yaw)
             y = args.radius * math.cos(yaw) - args.radius
             z = SHIP_Z + args.heave * math.sin(2 * math.pi * t / args.heave_period)
@@ -118,6 +158,16 @@ def main() -> int:
             pz = z + PAD_LOCAL[2]
             rows.append((t, px, py, pz, roll, pitch, yaw))
 
+            if pub is not None:
+                if len(rows) >= 2:
+                    dt = rows[-1][0] - rows[-2][0]
+                    vx = (px - rows[-2][1]) / dt if dt > 1e-4 else 0.0
+                    vy = (py - rows[-2][2]) / dt if dt > 1e-4 else 0.0
+                    vz = (pz - rows[-2][3]) / dt if dt > 1e-4 else 0.0
+                else:
+                    vx = vy = vz = 0.0
+                publish_pad(px, py, pz, vx, vy, vz, yaw_to_quat(yaw))
+
             if t - last_print >= 2.0:
                 last_print = t
                 print(f"  t={t:6.2f}s  ship=({x:+.2f},{y:+.2f},{z:.2f}) "
@@ -126,6 +176,9 @@ def main() -> int:
         print("\n中断")
     finally:
         pass  # gz.transport Node 没有 close()
+        if rnode is not None:
+            rnode.destroy_node()
+            rclpy.shutdown()
 
     if rows:
         ts = [r[0] for r in rows]
