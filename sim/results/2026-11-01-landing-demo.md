@@ -3,6 +3,8 @@
 把仓库里的理论控制器（`UAV_Control.direct.PointLandingController`）接进仿真，
 完成「起飞 → 8 m 外进场 → 落点上方 → 垂直下降 → 着陆」。
 
+![着陆轨迹](2026-11-01-landing-trajectory.png)
+
 ## 控制结构
 
 ```
