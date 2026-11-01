@@ -1,0 +1,211 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  X650 避障测试世界（3DVFH* / 深度相机）
+
+  布局（机体朝 +X，起飞点 = 原点）：
+    0–4 m    起飞 / 悬停区，无遮挡
+    4–10 m   绕桩：4 根圆柱交替偏置 ±0.9 m，检验侧向避让与重规划
+    10 m     带 1.4 m 门洞的墙（两段），检验窄通道通过
+    12–18 m  走廊：两侧墙 y=±1.6 m，检验贴壁飞行与宽度估计
+    20 m     建筑体块（4×4×4 m），检验远距目标绕行
+
+  尺寸参照 BOM 的「速度红线」：335L 按 6 m 感知设计，巡航 ≤3 m/s、上限 4 m/s，
+  因此障碍间距按 3 m/s 反应距离（a=3 m/s²、反应 0.3 s、1.5 m 裕量）预留。
+-->
+<sdf version="1.9">
+  <world name="x650_obstacles">
+    <physics type="ode">
+      <max_step_size>0.004</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+      <real_time_update_rate>250</real_time_update_rate>
+    </physics>
+    <gravity>0 0 -9.8</gravity>
+    <magnetic_field>6e-06 2.3e-05 -4.2e-05</magnetic_field>
+    <atmosphere type="adiabatic"/>
+    <scene>
+      <grid>false</grid>
+      <ambient>0.4 0.4 0.4 1</ambient>
+      <background>0.7 0.7 0.7 1</background>
+      <shadows>true</shadows>
+    </scene>
+
+    <light type="directional" name="sun">
+      <cast_shadows>true</cast_shadows>
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>0.8 0.8 0.8 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+      <attenuation>
+        <range>1000</range>
+        <constant>0.9</constant>
+        <linear>0.01</linear>
+        <quadratic>0.001</quadratic>
+      </attenuation>
+      <direction>-0.5 0.1 -0.9</direction>
+    </light>
+
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <pose>0 0 -5 0 0 0</pose>
+          <geometry>
+            <box>
+              <size>100000 100000 10</size>
+            </box>
+          </geometry>
+          <surface>
+            <friction>
+              <ode/>
+            </friction>
+            <bounce/>
+            <contact/>
+          </surface>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>500 500</size>
+            </plane>
+          </geometry>
+        </visual>
+      </link>
+    </model>
+
+    <!-- 绕桩：4 根圆柱，交替 ±0.9 m -->
+    <model name="pole_1">
+      <static>true</static>
+      <pose>4 0.9 1.0 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><cylinder><radius>0.15</radius><length>2.0</length></cylinder></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><cylinder><radius>0.15</radius><length>2.0</length></cylinder></geometry>
+          <material><diffuse>0.85 0.35 0.2 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="pole_2">
+      <static>true</static>
+      <pose>6 -0.9 1.0 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><cylinder><radius>0.15</radius><length>2.0</length></cylinder></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><cylinder><radius>0.15</radius><length>2.0</length></cylinder></geometry>
+          <material><diffuse>0.85 0.35 0.2 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="pole_3">
+      <static>true</static>
+      <pose>8 0.9 1.0 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><cylinder><radius>0.15</radius><length>2.0</length></cylinder></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><cylinder><radius>0.15</radius><length>2.0</length></cylinder></geometry>
+          <material><diffuse>0.85 0.35 0.2 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="pole_4">
+      <static>true</static>
+      <pose>10 -0.9 1.0 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><cylinder><radius>0.15</radius><length>2.0</length></cylinder></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><cylinder><radius>0.15</radius><length>2.0</length></cylinder></geometry>
+          <material><diffuse>0.85 0.35 0.2 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- 门洞墙：x=10，门洞 |y|<0.7，两侧墙体各 3.3 m 长 -->
+    <model name="door_wall_left">
+      <static>true</static>
+      <pose>10 2.35 1.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>0.2 3.3 2.5</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>0.2 3.3 2.5</size></box></geometry>
+          <material><diffuse>0.7 0.7 0.72 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="door_wall_right">
+      <static>true</static>
+      <pose>10 -2.35 1.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>0.2 3.3 2.5</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>0.2 3.3 2.5</size></box></geometry>
+          <material><diffuse>0.7 0.7 0.72 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- 走廊：x=12–18，两侧墙 y=±1.6 -->
+    <model name="corridor_left">
+      <static>true</static>
+      <pose>15 1.6 1.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>6.0 0.1 2.5</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>6.0 0.1 2.5</size></box></geometry>
+          <material><diffuse>0.6 0.65 0.7 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="corridor_right">
+      <static>true</static>
+      <pose>15 -1.6 1.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>6.0 0.1 2.5</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>6.0 0.1 2.5</size></box></geometry>
+          <material><diffuse>0.6 0.65 0.7 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- 远端建筑体块 -->
+    <model name="building">
+      <static>true</static>
+      <pose>20 3 2.0 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>4 4 4</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>4 4 4</size></box></geometry>
+          <material><diffuse>0.5 0.55 0.6 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <!-- 地理原点：与上游 PX4 default.sdf 一致（苏黎世 47.3979N / 8.5462E）。
+         这一项不能省：缺少 spherical_coordinates 时 Gazebo 的磁力计按特斯拉原值发布、
+         WMM 参考点退化到 (0,0)，PX4 会报 "Preflight Fail: Strong magnetic interference"。 -->
+    <spherical_coordinates>
+      <surface_model>EARTH_WGS84</surface_model>
+      <world_frame_orientation>ENU</world_frame_orientation>
+      <latitude_deg>47.397971057728974</latitude_deg>
+      <longitude_deg>8.546163739800146</longitude_deg>
+      <elevation>0</elevation>
+      <heading_deg>0</heading_deg>
+    </spherical_coordinates>
+  </world>
+</sdf>

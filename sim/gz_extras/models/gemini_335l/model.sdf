@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  奥比中光 Gemini 335L 深度相机（仿真代理）
+
+  真机指标（BOM 第 11 项）：
+    基线 95 mm · 量程 0.17–20 m+（最佳 0.25–6 m）· 深度 1280×800 · RGB 1280×800@60
+    5V/1.5A · USB-C 单线取电 · IP65
+
+  仿真取舍：
+    1. Gazebo 的 depth_camera 用深度缓冲直接出图，不模拟双目视差，
+       因此 95 mm 基线只体现在几何与文档上，不产生真实视差/遮挡差异。
+       需要验证双目算法请换 `rgbd_camera` 或用 Orbbec 官方 Gazebo 插件。
+    2. 分辨率降为 640×480 / 848×480：无 GPU（llvmpipe 软件渲染）时
+       1280×800@30 会吃掉全部 CPU 预算。需要高分辨率时改 image/<width,height>。
+    3. near 0.17 / far 20.0 按真机量程设置；避障按 6 m 设计，见 BOM「速度红线」。
+-->
+<sdf version="1.9">
+  <model name="gemini_335l">
+    <pose>0 0 0 0 0 0</pose>
+    <self_collide>false</self_collide>
+    <static>false</static>
+    <link name="camera_link">
+      <inertial>
+        <mass>0.133</mass>
+        <inertia>
+          <ixx>0.000186</ixx>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyy>0.0000147</iyy>
+          <iyz>0</iyz>
+          <izz>0.00020</izz>
+        </inertia>
+      </inertial>
+
+      <visual name="body_visual">
+        <pose>0 0 0 0 0 0</pose>
+        <geometry>
+          <box>
+            <size>0.124 0.030 0.028</size>
+          </box>
+        </geometry>
+        <material>
+          <diffuse>0.2 0.2 0.22 1</diffuse>
+          <specular>0.3 0.3 0.3 1</specular>
+        </material>
+      </visual>
+      <collision name="body_collision">
+        <pose>0 0 0 0 0 0</pose>
+        <geometry>
+          <box>
+            <size>0.124 0.030 0.028</size>
+          </box>
+        </geometry>
+      </collision>
+
+      <!-- 深度：水平 FOV 90°、垂直 65°（真机 1280×800 对应 90°×65°） -->
+      <sensor name="depth_camera" type="depth_camera">
+        <gz_frame_id>camera_link</gz_frame_id>
+        <pose>0.005 0 0 0 0 0</pose>
+        <camera>
+          <horizontal_fov>1.5708</horizontal_fov>
+          <image>
+            <width>640</width>
+            <height>480</height>
+            <format>R_FLOAT32</format>
+          </image>
+          <clip>
+            <near>0.17</near>
+            <far>20.0</far>
+          </clip>
+        </camera>
+        <always_on>1</always_on>
+        <update_rate>30</update_rate>
+        <visualize>false</visualize>
+        <topic>depth_camera</topic>
+      </sensor>
+
+      <!-- RGB：真机 1280×800@60，仿真降到 848×480@30 -->
+      <sensor name="rgb_camera" type="camera">
+        <gz_frame_id>camera_link</gz_frame_id>
+        <pose>0.005 0.0475 0 0 0 0</pose>
+        <camera>
+          <horizontal_fov>1.5708</horizontal_fov>
+          <image>
+            <width>848</width>
+            <height>480</height>
+          </image>
+          <clip>
+            <near>0.05</near>
+            <far>100</far>
+          </clip>
+        </camera>
+        <always_on>1</always_on>
+        <update_rate>30</update_rate>
+        <visualize>false</visualize>
+      </sensor>
+    </link>
+  </model>
+</sdf>

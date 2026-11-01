@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  X650 + Gemini 335L（挂载于机头下方 x=0.16 m）
+
+  用法：make px4_sitl gz_x650_depth
+  上游对应实现：x500_depth = x500 + OakD-Lite（同一种 include+merge+fixed joint 写法）
+-->
+<sdf version="1.9">
+  <model name="x650_depth">
+    <include merge="true">
+      <uri>model://x650</uri>
+    </include>
+
+    <include merge="true">
+      <uri>model://gemini_335l</uri>
+      <pose>0.16 0 -0.04 0 0 0</pose>
+    </include>
+
+    <joint name="CameraJoint" type="fixed">
+      <parent>base_link</parent>
+      <child>camera_link</child>
+      <pose relative_to="base_link">0.16 0 -0.04 0 0 0</pose>
+    </joint>
+  </model>
+</sdf>

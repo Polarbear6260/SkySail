@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  X650 完整模型 = x650_base（质量/惯量/传感器） + 4 路电机模型
+
+  电机参数标定（依据 BOM 台架数据：MN4014 KV330 + 15×5 桨，单电机）
+      50% 油门 830 g  65% 1150 g  75% 1430 g  85% 1690 g  100% 1920 g
+  PX4 → Gazebo 的映射为 affine：  ω = EC_MIN + u · (EC_MAX - EC_MIN)
+  本模型取 EC_MIN = 150 rad/s（怠速）、EC_MAX = 460 rad/s（≈4420 rpm），则
+      k = motorConstant = 18.835 N / 460² = 8.9012e-05   （100% 时单电机 18.835 N = 1920 g）
+      悬停需求 8.772 N → ω = 313.9 rad/s → u = (313.9-150)/310 = 0.529  ✔ 对应 BOM 的 53%
+
+  注意：Gazebo 的推力随 ω² 变化，而真实 ESC 的推力曲线略高于二次（50% 油门
+  实测为最大推力的 43.2%，二次模型给 25%）。本组参数用「怠速偏置 + 限定最大转速」
+  去逼近台架曲线，全油门段仍有约 8% 偏差，见 docs/01-bom-to-sim.md 的对照表。
+  正式标定用 scripts/05_check_model_math.py 与试飞数据回归。
+-->
+<sdf version="1.9">
+  <model name="x650">
+    <include merge="true">
+      <uri>model://x650_base</uri>
+    </include>
+
+    <plugin filename="gz-sim-multicopter-motor-model-system"
+      name="gz::sim::systems::MulticopterMotorModel">
+      <jointName>rotor_0_joint</jointName>
+      <linkName>rotor_0</linkName>
+      <turningDirection>ccw</turningDirection>
+      <timeConstantUp>0.0125</timeConstantUp>
+      <timeConstantDown>0.025</timeConstantDown>
+      <maxRotVelocity>460.0</maxRotVelocity>
+      <motorConstant>8.9012e-05</motorConstant>
+      <momentConstant>0.0305</momentConstant>
+      <commandSubTopic>command/motor_speed</commandSubTopic>
+      <motorNumber>0</motorNumber>
+      <rotorDragCoefficient>1.25e-03</rotorDragCoefficient>
+      <rollingMomentCoefficient>1e-06</rollingMomentCoefficient>
+      <rotorVelocitySlowdownSim>10</rotorVelocitySlowdownSim>
+      <motorType>velocity</motorType>
+    </plugin>
+
+    <plugin filename="gz-sim-multicopter-motor-model-system"
+      name="gz::sim::systems::MulticopterMotorModel">
+      <jointName>rotor_1_joint</jointName>
+      <linkName>rotor_1</linkName>
+      <turningDirection>ccw</turningDirection>
+      <timeConstantUp>0.0125</timeConstantUp>
+      <timeConstantDown>0.025</timeConstantDown>
+      <maxRotVelocity>460.0</maxRotVelocity>
+      <motorConstant>8.9012e-05</motorConstant>
+      <momentConstant>0.0305</momentConstant>
+      <commandSubTopic>command/motor_speed</commandSubTopic>
+      <motorNumber>1</motorNumber>
+      <rotorDragCoefficient>1.25e-03</rotorDragCoefficient>
+      <rollingMomentCoefficient>1e-06</rollingMomentCoefficient>
+      <rotorVelocitySlowdownSim>10</rotorVelocitySlowdownSim>
+      <motorType>velocity</motorType>
+    </plugin>
+
+    <plugin filename="gz-sim-multicopter-motor-model-system"
+      name="gz::sim::systems::MulticopterMotorModel">
+      <jointName>rotor_2_joint</jointName>
+      <linkName>rotor_2</linkName>
+      <turningDirection>cw</turningDirection>
+      <timeConstantUp>0.0125</timeConstantUp>
+      <timeConstantDown>0.025</timeConstantDown>
+      <maxRotVelocity>460.0</maxRotVelocity>
+      <motorConstant>8.9012e-05</motorConstant>
+      <momentConstant>0.0305</momentConstant>
+      <commandSubTopic>command/motor_speed</commandSubTopic>
+      <motorNumber>2</motorNumber>
+      <rotorDragCoefficient>1.25e-03</rotorDragCoefficient>
+      <rollingMomentCoefficient>1e-06</rollingMomentCoefficient>
+      <rotorVelocitySlowdownSim>10</rotorVelocitySlowdownSim>
+      <motorType>velocity</motorType>
+    </plugin>
+
+    <plugin filename="gz-sim-multicopter-motor-model-system"
+      name="gz::sim::systems::MulticopterMotorModel">
+      <jointName>rotor_3_joint</jointName>
+      <linkName>rotor_3</linkName>
+      <turningDirection>cw</turningDirection>
+      <timeConstantUp>0.0125</timeConstantUp>
+      <timeConstantDown>0.025</timeConstantDown>
+      <maxRotVelocity>460.0</maxRotVelocity>
+      <motorConstant>8.9012e-05</motorConstant>
+      <momentConstant>0.0305</momentConstant>
+      <commandSubTopic>command/motor_speed</commandSubTopic>
+      <motorNumber>3</motorNumber>
+      <rotorDragCoefficient>1.25e-03</rotorDragCoefficient>
+      <rollingMomentCoefficient>1e-06</rollingMomentCoefficient>
+      <rotorVelocitySlowdownSim>10</rotorVelocitySlowdownSim>
+      <motorType>velocity</motorType>
+    </plugin>
+
+    <plugin filename="MotorFailurePlugin" name="gz::sim::systems::MotorFailureSystem">
+    </plugin>
+  </model>
+</sdf>

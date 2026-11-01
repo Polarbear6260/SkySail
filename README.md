@@ -97,3 +97,12 @@ The LQR core remains usable directly when a caller already has a reference:
 ```python
 from UAV_Control import AugmentedLQRController
 ```
+
+## Simulation
+
+PX4 SITL + Gazebo Harmonic environment for the X650 airframe (BOM parameters,
+depth camera proxy and an obstacle world for 3DVFH* testing):
+
+- Environment overview: [`sim/README.md`](sim/README.md)
+- Reproduction guide: [`sim/docs/03-reproduce.md`](sim/docs/03-reproduce.md)
+- Baseline results: [`sim/results/2026-10-31-x650-sitl-baseline.md`](sim/results/2026-10-31-x650-sitl-baseline.md)

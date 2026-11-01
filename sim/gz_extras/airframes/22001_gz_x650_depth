@@ -1,0 +1,54 @@
+#!/bin/sh
+#
+# @name Gazebo X650 Depth
+#
+# @type Quadrotor
+#
+# X650 + Gemini 335L 深度相机（x650_depth 模型）。
+# 参数与 4012_gz_x650 完全一致，仅 PX4_SIM_MODEL 不同。
+#
+
+. ${R}etc/init.d/rc.mc_defaults
+
+PX4_SIMULATOR=${PX4_SIMULATOR:=gz}
+PX4_GZ_WORLD=${PX4_GZ_WORLD:=default}
+PX4_SIM_MODEL=${PX4_SIM_MODEL:=x650_depth}
+
+param set-default SIM_GZ_EN 1
+
+param set-default CA_AIRFRAME 0
+param set-default CA_ROTOR_COUNT 4
+
+param set-default CA_ROTOR0_PX 0.165
+param set-default CA_ROTOR0_PY 0.279
+param set-default CA_ROTOR0_KM  0.05
+
+param set-default CA_ROTOR1_PX -0.165
+param set-default CA_ROTOR1_PY -0.279
+param set-default CA_ROTOR1_KM  0.05
+
+param set-default CA_ROTOR2_PX 0.165
+param set-default CA_ROTOR2_PY -0.279
+param set-default CA_ROTOR2_KM -0.05
+
+param set-default CA_ROTOR3_PX -0.165
+param set-default CA_ROTOR3_PY 0.279
+param set-default CA_ROTOR3_KM -0.05
+
+param set-default SIM_GZ_EC_FUNC1 101
+param set-default SIM_GZ_EC_FUNC2 102
+param set-default SIM_GZ_EC_FUNC3 103
+param set-default SIM_GZ_EC_FUNC4 104
+
+param set-default SIM_GZ_EC_MIN1 150
+param set-default SIM_GZ_EC_MIN2 150
+param set-default SIM_GZ_EC_MIN3 150
+param set-default SIM_GZ_EC_MIN4 150
+
+param set-default SIM_GZ_EC_MAX1 460
+param set-default SIM_GZ_EC_MAX2 460
+param set-default SIM_GZ_EC_MAX3 460
+param set-default SIM_GZ_EC_MAX4 460
+
+param set-default MPC_THR_HOVER 0.53
+param set-default NAV_DLL_ACT 2
