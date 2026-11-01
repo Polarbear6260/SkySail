@@ -105,3 +105,22 @@ ros2 run x650_offboard landing_demo --ros-args -p alt:=2.5 -p landing_x:=8.0
 | 到位精度 | 末速度 < 0.03 m/s，3 个航点全部命中（0.5 m 判定半径） |
 
 详见 [`../results/2026-11-01-offboard-flight.md`](../results/2026-11-01-offboard-flight.md)。
+
+## 可视化演示（一条命令出视频）
+
+```bash
+./scripts/08_visual_demo.sh                 # 落点 demo，自动录成 MP4
+./scripts/08_visual_demo.sh --hover         # 悬停 + 航点
+LAND_X=4 ALT=2.5 ./scripts/08_visual_demo.sh
+REC=0 ./scripts/08_visual_demo.sh           # 只看不录
+```
+
+脚本依次做：清残留（**gz 的 CLI 是 ruby 进程，`pkill -x gz` 抓不到**）→ 起 agent → 起 SITL →
+附着 GUI（`gz sim -g --gui-config`，避免 quick start 弹窗）→ 把窗口置顶 → 只录 Gazebo 窗口区域 →
+跑 demo → 打印落点误差。
+
+前置：`xwininfo`、`python-xlib`、`imageio-ffmpeg`（后两个 `pip install` 即可）、有 `DISPLAY`。
+
+两个坑：
+1. ROS 2 的 `setup.bash` 里有未定义变量，脚本必须 `set +u` 之后再 source，否则 `ros2` 命令不存在；
+2. 停录制必须 `SIGTERM`——`SIGKILL` 会让 mp4 缺少 moov atom，只剩几 KB 且无法播放。
