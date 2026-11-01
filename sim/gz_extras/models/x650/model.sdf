@@ -91,8 +91,5 @@
       <rotorVelocitySlowdownSim>10</rotorVelocitySlowdownSim>
       <motorType>velocity</motorType>
     </plugin>
-
-    <plugin filename="MotorFailurePlugin" name="gz::sim::systems::MotorFailureSystem">
-    </plugin>
   </model>
 </sdf>
