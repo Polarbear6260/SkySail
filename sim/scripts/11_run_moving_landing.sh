@@ -14,14 +14,14 @@ echo "[$(date +%H:%M:%S)] 清场" > "$WS/logs/live_chain3.log"
 
 (cd ~/tools/Micro-XRCE-DDS-Agent/build2 && setsid nohup env LD_LIBRARY_PATH=$PWD ./MicroXRCEAgent udp4 -p 8888 > "$WS/logs/agent_live3.log" 2>&1 &)
 sleep 3
-(cd ~/PX4-Autopilot && HEADLESS=1 PX4_GZ_WORLD=x650_sea PX4_GZ_MODEL_POSE="0,0,0.85,0,0,0" \
+(cd ~/PX4-Autopilot && HEADLESS=1 PX4_GZ_WORLD=x650_sea PX4_GZ_MODEL_POSE="0,16,1.02,0,0,0" \
    setsid nohup timeout 400 make px4_sitl gz_x650 > "$WS/logs/sitl_live3.log" 2>&1 < <(sleep 400) &)
 for i in $(seq 1 90); do grep -qa "gz_bridge.*model: x650" "$WS/logs/sitl_live3.log" 2>/dev/null && break; sleep 1; done
 echo "[$(date +%H:%M:%S)] SITL 就绪" >> "$WS/logs/live_chain3.log"
 
 # 参数：地面站/电池失效保护全部关掉（仿真专用）
 (cd ~/PX4-Autopilot && source .venv-px4/bin/activate
- for kv in "NAV_DLL_ACT 0" "SIM_BAT_ENABLE 0" "COM_LOW_BAT_ACT 0" "BAT1_V_EMPTY 3.2" "BAT1_CRIT_THR 0.03" "BAT1_LOW_THR 0.08"; do
+ for kv in "NAV_DLL_ACT 0" "SIM_BAT_ENABLE 0" "COM_LOW_BAT_ACT 0" "BAT1_V_EMPTY 2.0" "BAT1_R_INTERNAL 0" "SIM_BAT_MIN_PCT 100" "SIM_BAT_DRAIN 100000" "COM_OF_LOSS_T 5.0" "COM_OBL_RC_ACT 0"; do
    printf "param set %s\n" "$kv" | timeout 15 python Tools/mavlink_shell.py udpin:127.0.0.1:14540 >/dev/null 2>&1
  done)
 echo "[$(date +%H:%M:%S)] 参数已设（含电池阈值）" >> "$WS/logs/live_chain3.log"
@@ -71,7 +71,7 @@ if target[0]:
 PY
 
 set +u; source /opt/ros/jazzy/setup.bash; source ~/x650_ws/install/setup.bash
-setsid nohup python3 scripts/10_move_platform.py --world x650_sea --delay 12 --start-yaw 0 \
+setsid nohup env PYTHONPATH=/usr/lib/python3/dist-packages:$PYTHONPATH python3 scripts/10_move_platform.py --world x650_sea --delay 12 --start-yaw 0 \
    --duration 240 --csv "$WS/logs/ship_live3.csv" > "$WS/logs/ship_live3.log" 2>&1 &
 sleep 3
 timeout 120 ros2 run x650_offboard moving_landing --ros-args -p alt:=2.5 > "$LOG" 2>&1

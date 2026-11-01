@@ -63,7 +63,8 @@ class MovingLanding(Node):
 
         self.declare_parameter("alt", 2.5)
         self.declare_parameter("approach_clearance", 0.5)   # 进场时板面上方高度
-        self.declare_parameter("local_z_offset", 0.85)   # 出生点世界高度 = EKF 原点
+        self.declare_parameter("cruise_alt", 6.0)        # 巡航高度（相对落点板）
+        self.declare_parameter("local_z_offset", 1.02)   # 出生点世界高度 = EKF 原点
         self.declare_parameter("descent_rate", 0.6)   # 落地下降率 m/s（果断）
         self.declare_parameter("settle_s", 2.5)
         self.declare_parameter("skysail_path", os.path.expanduser("~/planning_ws/src/SkySail"))
@@ -72,6 +73,7 @@ class MovingLanding(Node):
         self.settle_s = float(self.get_parameter("settle_s").value)
         self.descent_rate = float(self.get_parameter("descent_rate").value)
         self.z_offset = float(self.get_parameter("local_z_offset").value)
+        self.cruise_alt = float(self.get_parameter("cruise_alt").value)
 
         self.ctrl = self._build_controller()
 
@@ -82,6 +84,7 @@ class MovingLanding(Node):
         self.armed = False
         self.landed = False
         self.finished = False
+        self.alt_hist = []
         self.t0 = self.get_clock().now().nanoseconds / 1e9
         self.state = "wait"
         self.arm_sent = 0.0
@@ -220,26 +223,38 @@ class MovingLanding(Node):
                 f"rel_h={rel_h:.2f} rel_v={rel_v:.2f} armed={self.armed} landed={self.landed}",
                 throttle_duration_sec=2.0)
 
-        # 3) 起飞段
+        # 3) 起飞段：先爬到巡航高度
         if self.state in ("wait", "takeoff"):
             if self.state == "wait":
                 self.state = "takeoff"
-            self.publish_position(np.array([0.0, 0.0, -self.alt]))
-            if alt > self.alt - 0.3:
-                self.state = "approach"
-                self.get_logger().info(f"到达 {alt:.2f} m，开始追落点板")
+            self.publish_position(np.array([0.0, 0.0, -self.cruise_alt]))
+            if alt > self.cruise_alt - 0.4:
+                self.state = "transit"
+                self.get_logger().info(f"到达巡航高度 {alt:.2f} m，转场飞向落点板")
             return
 
-        # 4) 进场：LQR 加速度控制，目标 = 板面上方 clearance
-        if self.state == "approach":
-            target = self.pad_ned + np.array([0.0, 0.0, -self.clearance])
+        # 3b) 转场：在巡航高度飞向落点板正上方
+        if self.state == "transit":
+            target = self.pad_ned + np.array([0.0, 0.0, -self.cruise_alt])
             acc = self.ctrl.compute_control(self.pos_ned, self.vel_ned, target,
                                             self.pad_vel_ned, "tracking",
                                             np.zeros(self.ctrl.lqr.preview_horizon))
             self.publish_accel(acc)
-            if rel_h < 0.15 and abs(rel[2] + self.clearance) < 0.5:
+            if rel_h < 0.5:
+                self.state = "approach"
+                self.get_logger().info(f"已到板上方（水平 {rel_h:.2f} m），开始下降")
+            return
+
+        # 4) 进场：从巡航高度下降，目标 = 板面
+        if self.state == "approach":
+            target = self.pad_ned + np.array([0.0, 0.0, 0.02])
+            acc = self.ctrl.compute_control(self.pos_ned, self.vel_ned, target,
+                                            self.pad_vel_ned, "tracking",
+                                            np.zeros(self.ctrl.lqr.preview_horizon))
+            self.publish_accel(acc)
+            if (alt - pad_alt) < self.clearance:
                 self.state = "descend"
-                self.get_logger().info(f"到达板面上方（水平 {rel_h:.2f} m），开始下降")
+                self.get_logger().info(f"降到板面上方 {alt - pad_alt:.2f} m（水平 {rel_h:.2f} m），精降")
             return
 
         # 5) 下降：用 touchdown 阶段（位置/速度权重加倍，动作更果断）
@@ -275,13 +290,15 @@ class MovingLanding(Node):
             self.publish_accel(acc)
             # 船在升沉，PX4 的落地检测永远不会判 True（世界系里一直在动），
             # 所以自己判：相对板面高度稳定 + 相对速度小 → 认为已坐实
+            # 触地判据用“高度停滞”而不是绝对高度差：
+            # PX4 的 alt 是相对出生点，落点板坐标是世界系，两者恒差一个量，
+            # 用差值判断永远对不上；改用“命令持续下压但高度不再下降”来判定接触。
+            # 简单果断：压紧后水平在 0.35 m 内持续 3 s，就认为已落稳 → 上锁
             rel_h_now = alt - pad_alt
-            # 果断判据：水平已对准 + 高度已贴板，0.5 s 后直接上锁，
-            # 不再等相对速度（压紧时本就有下降前馈，速度永远不会“静止”）
-            if rel_h < 0.30 and abs(rel_h_now) < 0.15:
+            if rel_h < 0.35:
                 if self.settle_start == 0.0:
                     self.settle_start = t
-                elif t - self.settle_start > 0.5:
+                elif t - self.settle_start > 3.0:
                     self.state = "touchdown"
                     self.send_cmd(CMD_ARM_DISARM, 0.0, 21196.0)   # 强制上锁 → 桨停
                     self.finished = True
