@@ -28,7 +28,8 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPo
 
 from geometry_msgs.msg import PoseStamped, TwistStamped
 from px4_msgs.msg import (OffboardControlMode, TrajectorySetpoint,
-                          VehicleCommand, VehicleLocalPosition, VehicleStatus)
+                          VehicleCommand, VehicleLandDetected,
+                          VehicleLocalPosition, VehicleStatus)
 
 CMD_ARM_DISARM = 400
 CMD_DO_SET_MODE = 176
@@ -55,6 +56,8 @@ class MovingLanding(Node):
         self.pub_cmd = self.create_publisher(VehicleCommand, "/fmu/in/vehicle_command", q)
         self.create_subscription(VehicleLocalPosition, "/fmu/out/vehicle_local_position_v1", self.on_pos, q)
         self.create_subscription(VehicleStatus, "/fmu/out/vehicle_status_v1", self.on_status, q)
+        for topic in ("/fmu/out/vehicle_land_detected", "/fmu/out/vehicle_land_detected_v1"):
+            self.create_subscription(VehicleLandDetected, topic, self.on_land, q)
         self.create_subscription(PoseStamped, "/ship/pad_pose", self.on_pad_pose, 10)
         self.create_subscription(TwistStamped, "/ship/pad_twist", self.on_pad_twist, 10)
 
@@ -73,6 +76,7 @@ class MovingLanding(Node):
         self.pad_ned: np.ndarray | None = None
         self.pad_vel_ned = np.zeros(3)
         self.armed = False
+        self.landed = False
         self.t0 = self.get_clock().now().nanoseconds / 1e9
         self.state = "wait"
         self.arm_sent = 0.0
@@ -116,6 +120,9 @@ class MovingLanding(Node):
 
     def on_status(self, m: VehicleStatus) -> None:
         self.armed = (m.arming_state == 2)
+
+    def on_land(self, m: VehicleLandDetected) -> None:
+        self.landed = bool(m.landed)
 
     def on_pad_pose(self, m: PoseStamped) -> None:
         self.pad_ned = enu_to_ned(np.array([m.pose.position.x, m.pose.position.y, m.pose.position.z]))
@@ -199,7 +206,7 @@ class MovingLanding(Node):
         if int(t * 2) % 4 == 0:
             self.get_logger().info(
                 f"state={self.state} alt={alt:.2f} pad_alt={pad_alt:.2f} "
-                f"rel_h={rel_h:.2f} rel_v={rel_v:.2f} armed={self.armed}",
+                f"rel_h={rel_h:.2f} rel_v={rel_v:.2f} armed={self.armed} landed={self.landed}",
                 throttle_duration_sec=2.0)
 
         # 3) 起飞段
@@ -219,7 +226,7 @@ class MovingLanding(Node):
                                             self.pad_vel_ned, "tracking",
                                             np.zeros(self.ctrl.lqr.preview_horizon))
             self.publish_accel(acc)
-            if rel_h < 0.4 and abs(rel[2] + self.clearance) < 0.5:
+            if rel_h < 0.15 and abs(rel[2] + self.clearance) < 0.5:
                 self.state = "descend"
                 self.get_logger().info(f"到达板面上方（水平 {rel_h:.2f} m），开始下降")
             return
@@ -231,6 +238,10 @@ class MovingLanding(Node):
                                             self.pad_vel_ned, "tracking",
                                             np.zeros(self.ctrl.lqr.preview_horizon))
             self.publish_accel(acc)
+            if rel_h > 0.35:
+                self.state = "approach"
+                self.get_logger().info(f"下降中横向偏出 {rel_h:.2f} m，回到进场段重新对准")
+                return
             if (alt - pad_alt) < 0.18 and rel_v < 0.3:
                 self.state = "settle"
                 self.settle_start = t
@@ -240,16 +251,30 @@ class MovingLanding(Node):
                     f"水平误差 {rel_h:.2f} m）")
             return
 
-        # 6) 贴板 → 压紧（位置环），并且**一直发布**
-        target = self.pad_ned + np.array([0.0, 0.0, 0.03])
-        self.publish_position(target)
-        rel_h_now = alt - pad_alt
-        if self.state == "settle" and abs(rel_h_now) < 0.10 and rel_v < 0.2:
-            self.state = "landed"
-            self.get_logger().info(
-                f"已落在板面（相对高度 {rel_h_now:+.2f} m，相对速度 {rel_v:.2f} m/s，"
-                f"水平误差 {self.land_err:.2f} m），保持压紧")
+        # 5b) 贴板压紧：位置设定点压到板面以下，逼出真实接触
+        if self.state == "settle":
+            # NED 下 z 越大越低：pad+0.10 表示“板面以下 10 cm”，让位置环持续下压
+            self.publish_position(self.pad_ned + np.array([0.0, 0.0, 0.10]))
+            # 船在升沉，PX4 的落地检测永远不会判 True（世界系里一直在动），
+            # 所以自己判：相对板面高度稳定 + 相对速度小 → 认为已坐实
+            rel_h_now = alt - pad_alt
+            if abs(rel_h_now) < 0.15 and rel_v < 0.20 and rel_h < 0.25:
+                if self.settle_start == 0.0:
+                    self.settle_start = t
+                elif t - self.settle_start > 1.5:
+                    self.state = "touchdown"
+                    self.send_cmd(CMD_ARM_DISARM, 0.0, 21196.0)   # 强制上锁 → 桨停
+                    self.get_logger().info(
+                        f"坐实（相对高度 {rel_h_now:+.2f} m，相对速度 {rel_v:.2f} m/s，"
+                        f"水平误差 {self.land_err:.2f} m）→ 强制上锁停机")
+            else:
+                self.settle_start = 0.0
+            return
 
+        # 5c) 已上锁：不再发送任何会触发失效保护的东西，等 demo 结束
+        if self.state in ("touchdown", "landed"):
+            self.publish_position(self.pad_ned + np.array([0.0, 0.0, 0.05]))
+            return
 
 def main() -> None:
     rclpy.init()

@@ -151,3 +151,26 @@ state=landed  alt=0.71~0.85 m   pad_alt=0.71~0.91 m   rel_v=0.04~0.12 m/s
 | `gz_extras/worlds/x650_sea.sdf` | 加 static `dock` 模型（如 2×2 m，台面 1.0 m），放在离船 15–20 m |
 | `11_run_moving_landing.sh` | `PX4_GZ_MODEL_POSE` 指向 dock 台面 |
 | `moving_landing.py` | 加 `cruise_alt` 参数：起飞 → 巡航高度 → LQR 在该高度追板 → 到板正上方再下降 |
+
+## 真正的降落（2026-11-02 01:52）
+
+**上锁已经能成功**：不再等 PX4 的 `vehicle_land_detected`（船在升沉，世界系里永远在动，
+它永远判 False），改为控制器自己判——相对板面高度稳定 1.5 s + 相对速度 <0.2 m/s，
+然后发强制上锁（`MAV_CMD_COMPONENT_ARM_DISARM`, param2=21196）。日志确认 `Disarmed by`。
+
+**遗留问题（下一轮要修）**：上锁瞬间水平偏移已经涨到 0.41–0.54 m，正好在落点板边缘，
+停机后从边上滑落。原因是 `settle` 阶段用**位置设定点**跟踪移动的板，PX4 的位置环对
+0.4 m/s 的移动目标有稳态滞后，偏移越积越大。
+
+修法：`settle/压紧` 阶段也改用**加速度控制**（或位置 + 速度前馈），让跟踪不滞后；
+同时下降前要求水平误差 <0.15 m（已改）。
+
+## 下一轮场景（按需求，2026-11-02 确认）
+
+1. **固定平台起飞**：在离船 15–20 m 处放 static `dock`（2×2 m，台面 1.0 m），飞机生成在台上
+2. **先爬高**：起飞到 6 m 巡航高度
+3. **高空接近**：在巡航高度平飞接近船
+4. **下降着陆**：到板正上方后下降、压紧、上锁
+
+改三处：`x650_sea.sdf` 加 dock；`11_run_moving_landing.sh` 改 `PX4_GZ_MODEL_POSE`；
+`moving_landing.py` 加 `cruise_alt` 并加位置+速度前馈。
