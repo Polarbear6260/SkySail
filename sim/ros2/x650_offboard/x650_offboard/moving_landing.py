@@ -166,52 +166,53 @@ class MovingLanding(Node):
 
     # ---------- 主循环 ----------
     def loop(self) -> None:
+        """每个周期都无条件发布设定点（否则 PX4 会判 offboard 丢失 → RTL）。"""
         t = self.now()
 
+        # 1) 未解锁：发位置设定点并请求解锁
         if not self.armed:
             self.publish_position(np.array([0.0, 0.0, -self.alt]))
             if t > 1.5 and (self.arm_sent == 0.0 or t - self.arm_sent > 5.0):
                 self.arm_sent = t
-                force = 21196.0 if t > 8.0 else 0.0
-                self.send_cmd(CMD_ARM_DISARM, 1.0, force)
+                self.send_cmd(CMD_ARM_DISARM, 1.0, 21196.0 if t > 8.0 else 0.0)
             return
 
-        if not self.offboard_req and t > 2.0:
-            self.send_cmd(CMD_DO_SET_MODE, 1.0, OFFBOARD)
-            self.offboard_req = True
-            self.get_logger().info("请求 OFFBOARD")
+        # 2) 解锁后请求 OFFBOARD（本周期仍然发布，避免任意一次空档）
+        if not self.offboard_req:
+            self.publish_position(np.array([0.0, 0.0, -self.alt]))
+            if t > 2.0:
+                self.send_cmd(CMD_DO_SET_MODE, 1.0, OFFBOARD)
+                self.offboard_req = True
+                self.get_logger().info("请求 OFFBOARD")
             return
-
-        # 每 2 s 打一次调试状态，便于定位“卡住”
-        if int(t * 2) % 4 == 0:
-            self.get_logger().info(
-                f"state={self.state} alt={-self.pos_ned[2]:.2f} "
-                f"pad={'ok' if self.pad_ned is not None else 'None'} "
-                f"armed={self.armed}", throttle_duration_sec=2.0)
 
         if self.pos_ned is None or self.pad_ned is None:
+            self.publish_position(np.array([0.0, 0.0, -self.alt]))
             return
 
         alt = -self.pos_ned[2]
         pad_alt = -self.pad_ned[2]
-
-        if self.state in ("wait", "takeoff"):
-            if self.state == "wait":
-                self.state = "takeoff"
-            if alt > self.alt - 0.3:
-                self.state = "approach"
-                self.get_logger().info(f"到达 {alt:.2f} m，开始追落点板")
-            else:
-                self.publish_position(np.array([0.0, 0.0, -self.alt]))
-                return
-
-        if self.pad_ned is None:
-            return
-
         rel = self.pos_ned - self.pad_ned
         rel_h = float(np.hypot(rel[0], rel[1]))
         rel_v = float(np.linalg.norm(self.vel_ned - self.pad_vel_ned))
 
+        if int(t * 2) % 4 == 0:
+            self.get_logger().info(
+                f"state={self.state} alt={alt:.2f} pad_alt={pad_alt:.2f} "
+                f"rel_h={rel_h:.2f} rel_v={rel_v:.2f} armed={self.armed}",
+                throttle_duration_sec=2.0)
+
+        # 3) 起飞段
+        if self.state in ("wait", "takeoff"):
+            if self.state == "wait":
+                self.state = "takeoff"
+            self.publish_position(np.array([0.0, 0.0, -self.alt]))
+            if alt > self.alt - 0.3:
+                self.state = "approach"
+                self.get_logger().info(f"到达 {alt:.2f} m，开始追落点板")
+            return
+
+        # 4) 进场：LQR 加速度控制，目标 = 板面上方 clearance
         if self.state == "approach":
             target = self.pad_ned + np.array([0.0, 0.0, -self.clearance])
             acc = self.ctrl.compute_control(self.pos_ned, self.vel_ned, target,
@@ -223,6 +224,7 @@ class MovingLanding(Node):
                 self.get_logger().info(f"到达板面上方（水平 {rel_h:.2f} m），开始下降")
             return
 
+        # 5) 下降：LQR 压到板面
         if self.state == "descend":
             target = self.pad_ned + np.array([0.0, 0.0, 0.02])
             acc = self.ctrl.compute_control(self.pos_ned, self.vel_ned, target,
@@ -235,22 +237,18 @@ class MovingLanding(Node):
                 self.land_err = rel_h
                 self.get_logger().info(
                     f"接触（相对高度 {alt - pad_alt:.2f} m，相对速度 {rel_v:.2f} m/s，"
-                    f"水平误差 {rel_h:.2f} m），贴板 {self.settle_s:.1f} s")
+                    f"水平误差 {rel_h:.2f} m）")
             return
 
-        if self.state == "settle":
-            # 跟着移动的板走，让 PX4 位置环把它按在甲板上
-            self.publish_position(self.pad_ned + np.array([0.0, 0.0, -0.06]))
-            rel_h_now = alt - pad_alt
-            if rel_h_now > 0.08 and t - self.settle_start < 6.0:
-                return                      # 还没贴到板面，继续压
-            if t - self.settle_start > self.settle_s and self.state != "hold":
-                # 不立即上锁：甲板仍在移动，上锁后没有系留会滑落海里。
-                # 改为继续用位置环把它按在落点板上（等价于“着陆后系留”）。
-                self.state = "hold"
-                self.get_logger().info(
-                    f"已贴板并保持跟踪（水平误差 {self.land_err:.2f} m），demo 结束")
-            return
+        # 6) 贴板 → 压紧（位置环），并且**一直发布**
+        target = self.pad_ned + np.array([0.0, 0.0, 0.03])
+        self.publish_position(target)
+        rel_h_now = alt - pad_alt
+        if self.state == "settle" and abs(rel_h_now) < 0.10 and rel_v < 0.2:
+            self.state = "landed"
+            self.get_logger().info(
+                f"已落在板面（相对高度 {rel_h_now:+.2f} m，相对速度 {rel_v:.2f} m/s，"
+                f"水平误差 {self.land_err:.2f} m），保持压紧")
 
 
 def main() -> None:
