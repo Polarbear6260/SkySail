@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>x650_offboard</name>
+  <version>0.1.0</version>
+  <description>Offboard control for the X650 PX4 SITL (uXRCE-DDS + px4_msgs)</description>
+  <maintainer email="Polarbear6260@users.noreply.github.com">Polarbear6260</maintainer>
+  <license>MIT</license>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>px4_msgs</exec_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

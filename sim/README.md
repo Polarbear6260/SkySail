@@ -160,3 +160,10 @@ git 拉 GitHub 时如果卡在 `接收对象中: 38%` 然后 `unexpected disconn
 | `PX4 server already running for instance 0` | 上次仿真残留（进程或 `/tmp/px4_lock-0`），`04` 启动前会自动清理；手工清理：`pkill -f 'px4_sitl_default/bin/px4'; rm -f /tmp/px4_lock-0` |
 | 深度相机没有话题 | 先确认仿真真的起来了（stale 锁会让新实例直接退出）；正常运行时可看到 `/depth_camera`、`/depth_camera/points` |
 | 模型装好但 `make px4_sitl gz_x650` 提示 airframe 不存在 | ① 装完资产必须**重编**；② airframe 必须登记在 `init.d-posix/airframes/CMakeLists.txt`（`03` 脚本会自动追加，重跑它即可） |
+
+## ROS 2 外部控制
+
+`ros2/x650_offboard`：用 `px4_msgs` + uXRCE-DDS 做 OFFBOARD 控制（仿真/真机同一条链路）。
+
+- 接入步骤与四个坑：[`ros2/README.md`](ros2/README.md)
+- 首飞结果：[`results/2026-11-01-offboard-flight.md`](results/2026-11-01-offboard-flight.md)
