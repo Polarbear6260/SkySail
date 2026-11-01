@@ -147,3 +147,19 @@ Izz       = m/12 · (0.65² + 0.65²) = 0.2265
 | 换电机/桨 | `x650/model.sdf` 的 `maxRotVelocity`、`motorConstant` | 同时改 airframe 的 `SIM_GZ_EC_MAX`，跑 `make check` |
 | 换轴距 | `x650_base` 的 rotor `pose` + airframe 的 `CA_ROTOR*_PX/PY` | 两边必须成比例（0.508L / 0.859L） |
 | 换悬停油门目标 | airframe 的 `MPC_THR_HOVER` | 只影响控制器前馈，不影响物理 |
+
+## 8. 视觉模型
+
+`x650_base` 的视觉用 **x500_base 的真实网格**按 1.3 倍缩放（500 mm → 650 mm）：
+
+| 部件 | 网格 | 缩放 |
+|---|---|---|
+| 机身 + 机臂 | `NXP-HGD-CF.dae` | 1.3 |
+| 电机底座 / 转子 | `5010Base.dae` / `5010Bell.dae` | 1.3 |
+| 桨 | `1345_prop_{ccw,cw}.stl`（13.45″） | 1.115（≈15″） |
+
+碰撞体仍是简化 box/cylinder（物理不受视觉效果影响）。
+
+**为什么不用官方 X650 CAD**：Holybro 在 TraceParts 上提供的 X650 CAD 需要**付费会员**才能下载
+（GrabCAD 上的社区版本也需要登录）。如果以后拿到 STEP/STL，替换 `model://x500_base/meshes/*`
+即可，其余不用动。
