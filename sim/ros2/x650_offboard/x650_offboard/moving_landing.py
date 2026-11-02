@@ -20,8 +20,17 @@ from __future__ import annotations
 import os
 import sys
 
+import math
+
 import numpy as np
 import rclpy
+
+try:                                     # Gazebo 真值（用于着陆判定）
+    import gz.msgs10.pose_v_pb2 as pose_v_pb2
+    import gz.transport13 as gz_transport
+    HAS_GZ = True
+except Exception:                        # noqa: BLE001
+    HAS_GZ = False
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
@@ -63,8 +72,9 @@ class MovingLanding(Node):
 
         self.declare_parameter("alt", 2.5)
         self.declare_parameter("approach_clearance", 0.5)   # 进场时板面上方高度
+        self.declare_parameter("gz_world", "x650_sea")
         self.declare_parameter("cruise_alt", 10.0)        # 巡航高度（相对落点板）
-        self.declare_parameter("local_z_offset", 1.02)   # 出生点世界高度 = EKF 原点
+        self.declare_parameter("local_z_offset", 0.0)   # PX4 本地原点=GPS 世界原点，无需偏移   # 出生点世界高度 = EKF 原点
         self.declare_parameter("cruise_hold_s", 3.0)   # 巡航高度保持多久再下降
         self.declare_parameter("descent_rate", 0.6)   # 落地下降率 m/s（果断）
         self.declare_parameter("settle_s", 2.5)
@@ -87,6 +97,8 @@ class MovingLanding(Node):
         self.landed = False
         self.finished = False
         self.alt_hist = []
+        self.true_horiz = float("inf")
+        self.true_above = float("inf")
         self.cruise_t = 0.0
         self.t0 = self.get_clock().now().nanoseconds / 1e9
         self.state = "wait"
@@ -94,6 +106,14 @@ class MovingLanding(Node):
         self.offboard_req = False
         self.settle_start = 0.0
         self.land_err = float("nan")
+
+        if HAS_GZ:
+            world = str(self.get_parameter("gz_world").value)
+            self._gz = gz_transport.Node()
+            self._gz.subscribe(pose_v_pb2.Pose_V, f"/world/{world}/pose/info", self.on_gz_pose)
+            self.get_logger().info("已接入 Gazebo 真值（着陆判定用真值，控制仍用 PX4）")
+        else:
+            self.get_logger().warn("没有 gz 绑定，着陆判定退回 PX4 估计（会有偏差）")
 
         self.create_timer(0.05, self.loop)
         self.get_logger().info(f"目标：起飞 {self.alt:.1f} m → 追移动落点板（上方 {self.clearance:.1f} m 进场）")
@@ -139,6 +159,24 @@ class MovingLanding(Node):
         # 世界 ENU → NED，再减去出生点高度（EKF 原点），得到 PX4 本体系坐标
         self.pad_ned = enu_to_ned(np.array([m.pose.position.x, m.pose.position.y,
                                            m.pose.position.z - self.z_offset]))
+
+    def on_gz_pose(self, msg) -> None:
+        """从 Gazebo 读真值，算机体相对落点板的真实水平距离与高度。"""
+        drone = ship = None
+        for p in msg.pose:
+            if p.name == "x650_0":
+                drone = p.position
+            elif p.name == "ship":
+                ship = p
+        if drone is None or ship is None:
+            return
+        q = ship.orientation
+        yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
+        px = ship.position.x + 0.30 * math.cos(yaw)
+        py = ship.position.y + 0.30 * math.sin(yaw)
+        pz = ship.position.z + 0.45
+        self.true_horiz = math.hypot(drone.x - px, drone.y - py)
+        self.true_above = drone.z - pz
 
     def on_pad_twist(self, m: TwistStamped) -> None:
         self.pad_vel_ned = enu_to_ned(np.array([m.twist.linear.x, m.twist.linear.y, m.twist.linear.z]))
@@ -223,7 +261,7 @@ class MovingLanding(Node):
         if int(t * 2) % 4 == 0:
             self.get_logger().info(
                 f"state={self.state} alt={alt:.2f} pad_alt={pad_alt:.2f} "
-                f"rel_h={rel_h:.2f} rel_v={rel_v:.2f} armed={self.armed} landed={self.landed}",
+                f"rel_h={rel_h:.2f} rel_v={rel_v:.2f} 真值(水平={self.true_horiz:.2f} 高于板面={self.true_above:+.2f}) armed={self.armed}",
                 throttle_duration_sec=2.0)
 
         # 3) 起飞段：先爬到巡航高度
@@ -260,7 +298,7 @@ class MovingLanding(Node):
                                             self.pad_vel_ned, "tracking",
                                             np.zeros(self.ctrl.lqr.preview_horizon))
             self.publish_accel(acc)
-            if (alt - pad_alt) < self.clearance:
+            if self.true_above < self.clearance:
                 self.state = "descend"
                 self.get_logger().info(f"降到板面上方 {alt - pad_alt:.2f} m（水平 {rel_h:.2f} m），精降")
             return
@@ -303,7 +341,7 @@ class MovingLanding(Node):
             # 用差值判断永远对不上；改用“命令持续下压但高度不再下降”来判定接触。
             # 简单果断：压紧后水平在 0.35 m 内持续 3 s，就认为已落稳 → 上锁
             rel_h_now = alt - pad_alt
-            if rel_h < 0.35:
+            if self.true_horiz < 0.35 and self.true_above < 0.10:
                 if self.settle_start == 0.0:
                     self.settle_start = t
                 elif t - self.settle_start > 3.0:
@@ -311,8 +349,8 @@ class MovingLanding(Node):
                     self.send_cmd(CMD_ARM_DISARM, 0.0, 21196.0)   # 强制上锁 → 桨停
                     self.finished = True
                     self.get_logger().info(
-                        f"坐实（相对高度 {rel_h_now:+.2f} m，相对速度 {rel_v:.2f} m/s，"
-                        f"水平误差 {self.land_err:.2f} m）→ 强制上锁停机")
+                        f"坐实（真值：高于板面 {self.true_above:+.2f} m，"
+                        f"水平 {self.true_horiz:.2f} m）→ 强制上锁停机")
             else:
                 self.settle_start = 0.0
             return
