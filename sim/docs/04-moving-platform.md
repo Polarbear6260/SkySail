@@ -307,3 +307,31 @@ TOUCHDOWN 成功：高于板面 -0.00 m，水平误差 0.22 m，t=29.9 s
 
 **遗留（仿真层，不影响算法结论）**：上锁后机体仍会从运动学甲板上滑落/被甩掉，
 原因见上一节（PX4 持有模型位姿 + 甲板是 set_pose 瞬移的静态体）。
+
+## 一键运行
+
+```bash
+cd sim
+./scripts/16_moving_landing_demo.sh                 # 带 GUI + 录制
+./scripts/16_moving_landing_demo.sh --no-gui        # 无头
+./scripts/16_moving_landing_demo.sh --no-record     # 只看不录
+./scripts/16_moving_landing_demo.sh --ship-speed 1.0
+```
+
+脚本做的事：清场 → 起 agent → 起 SITL（机体生成在 dock 上）→ 设仿真参数 → 起 GUI →
+录制 → 船直线航行（默认 1.5 m/s）→ 起飞 10 m → 追船 → 下降 → **触板即停**。
+
+输出：
+
+- 控制日志：`logs/run-<时间戳>.log`（含 `TOUCHDOWN 成功：高于板面 … m，水平误差 … m`）
+- Gazebo 真值 CSV：`logs/pose-<时间戳>.csv`
+- 视频：`logs/x650-moving-<时间戳>.mp4`
+
+依赖（可用环境变量覆盖）：`PX4_DIR`、`AGENT_BIN`、`SKYSAIL`、`WX650`。
+
+**实测（2026-11-02 18:03）**：
+
+```
+接触（相对高度 -0.10 m，相对速度 0.27 m/s，水平误差 0.09 m）
+TOUCHDOWN 成功：高于板面 -0.00 m，水平误差 0.24 m，时刻 t=28.5s
+```
