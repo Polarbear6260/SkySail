@@ -73,6 +73,7 @@ class MovingLanding(Node):
         self.declare_parameter("alt", 2.5)
         self.declare_parameter("approach_clearance", 0.5)   # 进场时板面上方高度
         self.declare_parameter("gz_world", "x650_sea")
+        self.declare_parameter("origin_enu", "0,16,1.02")   # 起飞点世界坐标 = PX4 本地原点
         self.declare_parameter("cruise_alt", 10.0)        # 巡航高度（相对落点板）
         self.declare_parameter("local_z_offset", 0.0)   # PX4 本地原点=GPS 世界原点，无需偏移   # 出生点世界高度 = EKF 原点
         self.declare_parameter("cruise_hold_s", 3.0)   # 巡航高度保持多久再下降
@@ -85,6 +86,8 @@ class MovingLanding(Node):
         self.descent_rate = float(self.get_parameter("descent_rate").value)
         self.z_offset = float(self.get_parameter("local_z_offset").value)
         self.cruise_alt = float(self.get_parameter("cruise_alt").value)
+        ox, oy, oz = (float(v) for v in str(self.get_parameter("origin_enu").value).split(","))
+        self.origin_enu = np.array([ox, oy, oz])
         self.cruise_hold_s = float(self.get_parameter("cruise_hold_s").value)
 
         self.ctrl = self._build_controller()
@@ -156,9 +159,9 @@ class MovingLanding(Node):
         self.landed = bool(m.landed)
 
     def on_pad_pose(self, m: PoseStamped) -> None:
-        # 世界 ENU → NED，再减去出生点高度（EKF 原点），得到 PX4 本体系坐标
-        self.pad_ned = enu_to_ned(np.array([m.pose.position.x, m.pose.position.y,
-                                           m.pose.position.z - self.z_offset]))
+        # 世界 ENU − 起飞点（PX4 本地原点）→ NED，得到 PX4 本地系坐标
+        world_enu = np.array([m.pose.position.x, m.pose.position.y, m.pose.position.z])
+        self.pad_ned = enu_to_ned(world_enu - self.origin_enu)
 
     def on_gz_pose(self, msg) -> None:
         """从 Gazebo 读真值，算机体相对落点板的真实水平距离与高度。"""
