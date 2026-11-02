@@ -70,11 +70,16 @@ def main() -> int:
     ap.add_argument("--world", default="x650_sea")
     ap.add_argument("--model", default="ship")
     ap.add_argument("--duration", type=float, default=120.0)
-    ap.add_argument("--radius", type=float, default=6.0, help="圆弧半径 m")
-    ap.add_argument("--speed", type=float, default=0.4, help="航速 m/s")
-    ap.add_argument("--heave", type=float, default=0.10, help="升沉幅值 m")
-    ap.add_argument("--heave-period", type=float, default=5.0, help="升沉周期 s")
-    ap.add_argument("--roll-deg", type=float, default=3.0)
+    ap.add_argument("--path", choices=["straight", "circle"], default="straight",
+                    help="straight=直线航行（默认，接近真实）；circle=大半径圆弧")
+    ap.add_argument("--radius", type=float, default=40.0, help="圆弧半径 m（circle 时用）")
+    ap.add_argument("--heading-amp-deg", type=float, default=2.5,
+                    help="艏向轻微摆动幅值（度），模拟操舵修正")
+    ap.add_argument("--heading-period", type=float, default=25.0)
+    ap.add_argument("--speed", type=float, default=1.5, help="航速 m/s（1.5≈3 节）")
+    ap.add_argument("--heave", type=float, default=0.08, help="升沉幅值 m")
+    ap.add_argument("--heave-period", type=float, default=6.0, help="升沉周期 s")
+    ap.add_argument("--roll-deg", type=float, default=4.0)
     ap.add_argument("--pitch-deg", type=float, default=2.0)
     ap.add_argument("--rate", type=float, default=50.0, help="set_pose 频率 Hz")
     ap.add_argument("--csv", default="")
@@ -141,9 +146,16 @@ def main() -> int:
             next_tick += period
 
             t_move = max(0.0, t - args.delay)          # 起航计时
-            yaw = args.start_yaw + omega_ship * t_move
-            x = args.radius * math.sin(yaw)
-            y = args.radius * math.cos(yaw) - args.radius
+            if args.path == "circle":
+                yaw = args.start_yaw + omega_ship * t_move
+                x = args.radius * math.sin(yaw)
+                y = args.radius * math.cos(yaw) - args.radius
+            else:
+                # 直线航行：沿 +x 以恒定航速前进，艏向叠加轻微摆动
+                yaw = args.start_yaw + math.radians(args.heading_amp_deg) * math.sin(
+                    2 * math.pi * t / args.heading_period)
+                x = args.speed * t_move * math.cos(args.start_yaw)
+                y = args.speed * t_move * math.sin(args.start_yaw)
             z = SHIP_Z + args.heave * math.sin(2 * math.pi * t / args.heave_period)
             roll = math.radians(args.roll_deg) * math.sin(2 * math.pi * t / args.heave_period + 0.6)
             pitch = math.radians(args.pitch_deg) * math.sin(2 * math.pi * t / 7.0)
@@ -159,7 +171,12 @@ def main() -> int:
             rows.append((t, px, py, pz, roll, pitch, yaw))
 
             if pub is not None:
-                if len(rows) >= 2:
+                if args.path == "straight":
+                    vx = args.speed * math.cos(args.start_yaw)
+                    vy = args.speed * math.sin(args.start_yaw)
+                    vz = args.heave * 2 * math.pi / args.heave_period * math.cos(
+                        2 * math.pi * t / args.heave_period)
+                elif len(rows) >= 2:
                     dt = rows[-1][0] - rows[-2][0]
                     vx = (px - rows[-2][1]) / dt if dt > 1e-4 else 0.0
                     vy = (py - rows[-2][2]) / dt if dt > 1e-4 else 0.0
