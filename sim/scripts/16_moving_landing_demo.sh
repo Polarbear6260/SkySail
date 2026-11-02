@@ -118,8 +118,11 @@ set +u; source /opt/ros/jazzy/setup.bash; source "$WX650/install/setup.bash"; se
 export PYTHONPATH="/usr/lib/python3/dist-packages:${PYTHONPATH:-}"
 setsid nohup python3 "$WS/scripts/12_log_pose.py" --world x650_sea --duration $((TIMEOUT + 20)) \
   --csv "$WS/logs/pose-$TS.csv" > "$WS/logs/pose-$TS.log" 2>&1 &
+SHIP_ARGS=()
+[ -n "${SHIP_SEED:-}" ] && SHIP_ARGS+=(--seed "$SHIP_SEED")
+[ "${SHIP_FIXED:-0}" = "1" ] && SHIP_ARGS+=(--fixed --start-x "$SHIP_START_X" --speed "$SHIP_SPEED")
 setsid nohup python3 "$WS/scripts/10_move_platform.py" --world x650_sea --delay "$SHIP_DELAY" \
-  --start-yaw 0 --start-x "$SHIP_START_X" --speed "$SHIP_SPEED" --duration $((TIMEOUT + 40)) \
+  "${SHIP_ARGS[@]}" --duration $((TIMEOUT + 40)) \
   --csv "$WS/logs/ship-$TS.csv" > "$WS/logs/ship-$TS.log" 2>&1 &
 sleep 3
 
