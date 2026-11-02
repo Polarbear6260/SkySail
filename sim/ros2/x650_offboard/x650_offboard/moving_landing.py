@@ -63,8 +63,9 @@ class MovingLanding(Node):
 
         self.declare_parameter("alt", 2.5)
         self.declare_parameter("approach_clearance", 0.5)   # 进场时板面上方高度
-        self.declare_parameter("cruise_alt", 6.0)        # 巡航高度（相对落点板）
+        self.declare_parameter("cruise_alt", 10.0)        # 巡航高度（相对落点板）
         self.declare_parameter("local_z_offset", 1.02)   # 出生点世界高度 = EKF 原点
+        self.declare_parameter("cruise_hold_s", 3.0)   # 巡航高度保持多久再下降
         self.declare_parameter("descent_rate", 0.6)   # 落地下降率 m/s（果断）
         self.declare_parameter("settle_s", 2.5)
         self.declare_parameter("skysail_path", os.path.expanduser("~/planning_ws/src/SkySail"))
@@ -74,6 +75,7 @@ class MovingLanding(Node):
         self.descent_rate = float(self.get_parameter("descent_rate").value)
         self.z_offset = float(self.get_parameter("local_z_offset").value)
         self.cruise_alt = float(self.get_parameter("cruise_alt").value)
+        self.cruise_hold_s = float(self.get_parameter("cruise_hold_s").value)
 
         self.ctrl = self._build_controller()
 
@@ -85,6 +87,7 @@ class MovingLanding(Node):
         self.landed = False
         self.finished = False
         self.alt_hist = []
+        self.cruise_t = 0.0
         self.t0 = self.get_clock().now().nanoseconds / 1e9
         self.state = "wait"
         self.arm_sent = 0.0
@@ -241,8 +244,13 @@ class MovingLanding(Node):
                                             np.zeros(self.ctrl.lqr.preview_horizon))
             self.publish_accel(acc)
             if rel_h < 0.5:
-                self.state = "approach"
-                self.get_logger().info(f"已到板上方（水平 {rel_h:.2f} m），开始下降")
+                if self.cruise_t == 0.0:
+                    self.cruise_t = t
+                    self.get_logger().info(
+                        f"已到板上方 {alt:.1f} m（水平 {rel_h:.2f} m），保持 {self.cruise_hold_s:.0f} s")
+                if t - self.cruise_t >= self.cruise_hold_s:
+                    self.state = "approach"
+                    self.get_logger().info(f"开始下降（自 {alt:.1f} m）")
             return
 
         # 4) 进场：从巡航高度下降，目标 = 板面
