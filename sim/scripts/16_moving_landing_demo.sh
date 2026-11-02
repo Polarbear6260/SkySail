@@ -159,9 +159,9 @@ fi
 
 PAD_POSE_TOPIC="/ship/pad_pose"; PAD_TWIST_TOPIC="/ship/pad_twist"; GPS_TOPIC=""
 if [ -n "$GPS_COARSE" ]; then
-  IFS=',' read -r G_NOISE G_JUMP <<< "$GPS_COARSE"
+  IFS=',' read -r G_NOISE G_JUMP G_RATE <<< "$GPS_COARSE"
   say "   GPS 级粗定位：σ=${G_NOISE:-1.5}m 跳变 ${G_JUMP:-0.02}"
-  setsid nohup python3 "$WS/scripts/19_gps_source.py" --rate 1 \
+  setsid nohup python3 "$WS/scripts/19_gps_source.py" --rate "${G_RATE:-1}" \
     --noise "${G_NOISE:-1.5}" --jump-p "${G_JUMP:-0.02}" \
     > "$WS/logs/gps-$TS.log" 2>&1 &
   GPS_PID=$!
