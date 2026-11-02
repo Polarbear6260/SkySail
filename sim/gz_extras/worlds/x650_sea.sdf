@@ -96,6 +96,7 @@
 
     <!-- 移动平台：船 + 落点板（static，由驱动脚本移动） -->
     <model name="ship">
+      <!-- 动态刚体 + 关重力：这样接触是真实接触（静态体被 set_pose 瞬移时撑不住机体） -->
       <static>true</static>
       <pose>0 0 0.36 0 0 0</pose>
       <link name="hull">

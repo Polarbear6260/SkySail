@@ -71,6 +71,8 @@ if target[0]:
 PY
 
 set +u; source /opt/ros/jazzy/setup.bash; source ~/x650_ws/install/setup.bash
+setsid nohup env PYTHONPATH=/usr/lib/python3/dist-packages:$PYTHONPATH python3 scripts/15_tie_down.py --duration 230 > "$WS/logs/tiedown.txt" 2>&1 &
+setsid nohup env PYTHONPATH=/usr/lib/python3/dist-packages:$PYTHONPATH python3 scripts/12_log_pose.py --world x650_sea --duration 220 --csv "$WS/logs/pose_$(date +%H%M%S).csv" > "$WS/logs/pose_log.txt" 2>&1 &
 setsid nohup env PYTHONPATH=/usr/lib/python3/dist-packages:$PYTHONPATH python3 scripts/10_move_platform.py --world x650_sea --delay 12 --start-yaw 0 \
    --duration 240 --csv "$WS/logs/ship_live3.csv" > "$WS/logs/ship_live3.log" 2>&1 &
 sleep 3
