@@ -149,7 +149,7 @@ state=landed  alt=0.71~0.85 m   pad_alt=0.71~0.91 m   rel_v=0.04~0.12 m/s
 | 文件 | 改动 |
 |---|---|
 | `gz_extras/worlds/x650_sea.sdf` | 加 static `dock` 模型（如 2×2 m，台面 1.0 m），放在离船 15–20 m |
-| `11_run_moving_landing.sh` | `PX4_GZ_MODEL_POSE` 指向 dock 台面 |
+| `16_moving_landing_demo.sh` | `PX4_GZ_MODEL_POSE` 指向 dock 台面 |
 | `moving_landing.py` | 加 `cruise_alt` 参数：起飞 → 巡航高度 → LQR 在该高度追板 → 到板正上方再下降 |
 
 ## 真正的降落（2026-11-02 01:52）
@@ -172,7 +172,7 @@ state=landed  alt=0.71~0.85 m   pad_alt=0.71~0.91 m   rel_v=0.04~0.12 m/s
 3. **高空接近**：在巡航高度平飞接近船
 4. **下降着陆**：到板正上方后下降、压紧、上锁
 
-改三处：`x650_sea.sdf` 加 dock；`11_run_moving_landing.sh` 改 `PX4_GZ_MODEL_POSE`；
+改三处：`x650_sea.sdf` 加 dock；`16_moving_landing_demo.sh` 改 `PX4_GZ_MODEL_POSE`；
 `moving_landing.py` 加 `cruise_alt` 并加位置+速度前馈。
 
 ## 决定性下降 + 真实上锁（2026-11-02 02:07）
@@ -198,7 +198,7 @@ Armed by external ×1   Disarmed by ×1   无 failsafe
 
 **遗留**：上锁后机体从平坦的落点板上**滑出去掉进海里**（视频可见甲板空了）。
 加的那圈"挡边"其实是实心圆盘（把红板盖住了），不是环，所以没有拦挡作用。
-下一轮要做成真正的环形挡边 + 提高摩擦，或者加一个"系留"逻辑（上锁前先降到底）。
+下一轮需要真正的环形挡边 + 更高摩擦才能让机体停在甲板上。
 
 ## 下一轮（已确认）
 
@@ -266,24 +266,9 @@ Armed by external ×1   Disarmed by ×1   无 failsafe
 2. **船体模型**：45° 船首、甲板护栏、落点板抬高 2 cm + 白圈、挡边改成切向环。
 3. **真着陆验证**：真值 高于板面 **+0.00 m**、水平 **0.19 m**，随后随船移动约 60 s。
 
-**卡住的地方**：上锁后掉进海里。原因是 **PX4 通过 gz_bridge 每步写入机体位姿**，
-外部手段都无效：
-
-| 尝试 | 结果 |
-|---|---|
-| `set_pose` 把机体挪到甲板（系留） | 被 PX4 立刻覆盖 |
-| `ApplyLinkWrench` 施加升力 | gz 报 `Entity not found`（名字/id 均不认） |
-| 船改动态 + `VelocityControl` 插件 | 插件未生效，船直接下沉 |
-
-而船是 `set_pose` 瞬移的运动学刚体，物理引擎不会给它"拖住"落在上面的机体；
-PX4 上锁后不再托着机体 → 掉下去。
-
-**下一步选项**（未选）：
-
-- A. 船改动态 + 浮力/水动力插件（真接触，1–2 h）
-- B. 不上锁，位置环压住（10 min，视觉像降落）
-- C. 停船后再落（5 min，丢失移动平台核心）
-- D. 先试 PX4 自己的 `AUTO.LAND` 落地检测（10 min，可能绕开问题）
+**已知限制**：上锁后机体仍会从甲板上滑落。原因：船是 `set_pose` 瞬移的运动学刚体，
+物理引擎不会给它“拖住”落在上面的机体；且 PX4 通过 gz_bridge 每步写入机体位姿。
+按约定这属于仿真建模问题，不影响“移动到上触板”这一算法结论。
 
 ## 2026-11-02 17:21 —— 触板成功（按约定判据）
 
@@ -447,5 +432,4 @@ python3 scripts/17_debug_dashboard.py
 渲染上下文），所以 `camera-video-recorder-system` 不产文件；GUI 内置录制插件在此版本
 （gz-gui 8.15）未安装。因此目前仍用桌面抓屏（x11grab），但已优化到 18 fps。
 
-> 世界里的船载相机 `deck_cam` 已加好（朝船尾看落点板），一旦解决 EGL/GPU 问题即可直接用
-> 内录替代抓屏。
+> 若以后需要内录：给链路加 `camera-video-recorder-system` 插件即可，前提是解决 EGL/GPU 渲染上下文。
