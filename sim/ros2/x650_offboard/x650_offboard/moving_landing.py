@@ -62,6 +62,9 @@ def enu_to_ned(v: np.ndarray) -> np.ndarray:
 class MovingLanding(Node):
     def __init__(self) -> None:
         super().__init__("x650_moving_landing")
+        # 平台位姿话题（默认真值；接感知仿真器时指向 /ship/pad_pose_d）
+        self.declare_parameter("pad_pose_topic", "/ship/pad_pose")
+        self.declare_parameter("pad_twist_topic", "/ship/pad_twist")
         q = fmu_qos()
         self.pub_mode = self.create_publisher(OffboardControlMode, "/fmu/in/offboard_control_mode", q)
         self.pub_sp = self.create_publisher(TrajectorySetpoint, "/fmu/in/trajectory_setpoint", q)
@@ -71,8 +74,10 @@ class MovingLanding(Node):
         self.create_subscription(VehicleStatus, "/fmu/out/vehicle_status_v1", self.on_status, q)
         for topic in ("/fmu/out/vehicle_land_detected", "/fmu/out/vehicle_land_detected_v1"):
             self.create_subscription(VehicleLandDetected, topic, self.on_land, q)
-        self.create_subscription(PoseStamped, "/ship/pad_pose", self.on_pad_pose, 10)
-        self.create_subscription(TwistStamped, "/ship/pad_twist", self.on_pad_twist, 10)
+        pose_topic = str(self.get_parameter("pad_pose_topic").value)
+        twist_topic = str(self.get_parameter("pad_twist_topic").value)
+        self.create_subscription(PoseStamped, pose_topic, self.on_pad_pose, 10)
+        self.create_subscription(TwistStamped, twist_topic, self.on_pad_twist, 10)
 
         self.declare_parameter("alt", 2.5)
         self.declare_parameter("approach_clearance", 0.5)   # 进场时板面上方高度
@@ -430,7 +435,9 @@ class MovingLanding(Node):
             # 对准且贴到板面上方 12 cm 以内 → 交给 PX4 的 AUTO.LAND：
             # 飞控自己收油门、自己判落地、自己上锁（不是我们硬停）
             # 成功判据（按约定）：真值确认"落在甲板上"一次即可
-            if self.true_horiz < 0.30 and self.true_above < 0.05:
+            # 成功判据必须带上下界：只判"低于板面"会把"穿过甲板掉下去"也算成功
+            if (self.true_horiz < 0.30 and -0.10 < self.true_above < 0.10
+                    and rel_v < 0.40):
                 if self.settle_start == 0.0:
                     self.settle_start = t
                 elif t - self.settle_start > 0.3:
