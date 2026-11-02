@@ -43,6 +43,7 @@ from px4_msgs.msg import (OffboardControlMode, TrajectorySetpoint,
 CMD_ARM_DISARM = 400
 CMD_DO_SET_MODE = 176
 OFFBOARD = 6
+AUTO_LAND_MODE = (4 << 16) | 6          # AUTO.LAND 的 custom_mode
 
 
 def fmu_qos() -> QoSProfile:
@@ -77,13 +78,17 @@ class MovingLanding(Node):
         self.declare_parameter("cruise_alt", 10.0)        # 巡航高度（相对落点板）
         self.declare_parameter("local_z_offset", 0.0)   # PX4 本地原点=GPS 世界原点，无需偏移   # 出生点世界高度 = EKF 原点
         self.declare_parameter("cruise_hold_s", 3.0)   # 巡航高度保持多久再下降
-        self.declare_parameter("descent_rate", 0.6)   # 落地下降率 m/s（果断）
+        self.declare_parameter("lead_time", 0.5)         # 转场时朝船的“未来位置”飞
+        self.declare_parameter("vel_gate", 0.40)        # 横向相对速度门限，满足才下降
+        self.declare_parameter("descent_rate", 0.45)   # 落地下降率 m/s（果断）
         self.declare_parameter("settle_s", 2.5)
         self.declare_parameter("skysail_path", os.path.expanduser("~/planning_ws/src/SkySail"))
         self.alt = float(self.get_parameter("alt").value)
         self.clearance = float(self.get_parameter("approach_clearance").value)
         self.settle_s = float(self.get_parameter("settle_s").value)
         self.descent_rate = float(self.get_parameter("descent_rate").value)
+        self.lead_time = float(self.get_parameter("lead_time").value)
+        self.vel_gate = float(self.get_parameter("vel_gate").value)
         self.z_offset = float(self.get_parameter("local_z_offset").value)
         self.cruise_alt = float(self.get_parameter("cruise_alt").value)
         ox, oy, oz = (float(v) for v in str(self.get_parameter("origin_enu").value).split(","))
@@ -97,6 +102,7 @@ class MovingLanding(Node):
         self.pad_ned: np.ndarray | None = None
         self.pad_vel_ned = np.zeros(3)
         self.armed = False
+        self.nav_state = 0
         self.landed = False
         self.finished = False
         self.alt_hist = []
@@ -108,6 +114,7 @@ class MovingLanding(Node):
         self.arm_sent = 0.0
         self.offboard_req = False
         self.settle_start = 0.0
+        self.land_retry = 0
         self.land_err = float("nan")
 
         if HAS_GZ:
@@ -154,6 +161,7 @@ class MovingLanding(Node):
 
     def on_status(self, m: VehicleStatus) -> None:
         self.armed = (m.arming_state == 2)
+        self.nav_state = int(m.nav_state)
 
     def on_land(self, m: VehicleLandDetected) -> None:
         self.landed = bool(m.landed)
@@ -260,6 +268,8 @@ class MovingLanding(Node):
         rel = self.pos_ned - self.pad_ned
         rel_h = float(np.hypot(rel[0], rel[1]))
         rel_v = float(np.linalg.norm(self.vel_ned - self.pad_vel_ned))
+        rel_v_h = float(np.hypot(self.vel_ned[0] - self.pad_vel_ned[0],
+                                 self.vel_ned[1] - self.pad_vel_ned[1]))
 
         if int(t * 2) % 4 == 0:
             self.get_logger().info(
@@ -279,12 +289,15 @@ class MovingLanding(Node):
 
         # 3b) 转场：在巡航高度飞向落点板正上方
         if self.state == "transit":
-            target = self.pad_ned + np.array([0.0, 0.0, -self.cruise_alt])
+            lead = self.pad_vel_ned * self.lead_time
+            target = self.pad_ned + lead + np.array([0.0, 0.0, -self.cruise_alt])
             acc = self.ctrl.compute_control(self.pos_ned, self.vel_ned, target,
                                             self.pad_vel_ned, "tracking",
                                             np.zeros(self.ctrl.lqr.preview_horizon))
             self.publish_accel(acc)
-            if rel_h < 0.5:
+            # 用“到提前量目标”的水平距离判定，而不是到板本身
+            d_target = float(np.hypot(self.pos_ned[0] - target[0], self.pos_ned[1] - target[1]))
+            if d_target < 0.6:
                 if self.cruise_t == 0.0:
                     self.cruise_t = t
                     self.get_logger().info(
@@ -301,7 +314,7 @@ class MovingLanding(Node):
                                             self.pad_vel_ned, "tracking",
                                             np.zeros(self.ctrl.lqr.preview_horizon))
             self.publish_accel(acc)
-            if self.true_above < self.clearance:
+            if self.true_above < self.clearance and rel_v_h < self.vel_gate:
                 self.state = "descend"
                 self.get_logger().info(f"降到板面上方 {alt - pad_alt:.2f} m（水平 {rel_h:.2f} m），精降")
             return
@@ -331,8 +344,8 @@ class MovingLanding(Node):
         # 5b) 贴板压紧：位置设定点压到板面以下，逼出真实接触
         if self.state == "settle":
             # 加速度控制 + 甲板速度前馈：位置环追移动目标有稳态滞后，会滑到板边
-            target = self.pad_ned + np.array([0.0, 0.0, 0.05])
-            ref_vel = self.pad_vel_ned + np.array([0.0, 0.0, 0.20])
+            target = self.pad_ned + np.array([0.0, 0.0, -0.02])   # 板面之上 2 cm
+            ref_vel = self.pad_vel_ned                              # 不再压下去
             acc = self.ctrl.compute_control(self.pos_ned, self.vel_ned, target,
                                             ref_vel, "touchdown",
                                             np.zeros(self.ctrl.lqr.preview_horizon))
@@ -344,21 +357,43 @@ class MovingLanding(Node):
             # 用差值判断永远对不上；改用“命令持续下压但高度不再下降”来判定接触。
             # 简单果断：压紧后水平在 0.35 m 内持续 3 s，就认为已落稳 → 上锁
             rel_h_now = alt - pad_alt
-            if self.true_horiz < 0.35 and self.true_above < 0.10:
+            # 对准且贴到板面上方 12 cm 以内 → 交给 PX4 的 AUTO.LAND：
+            # 飞控自己收油门、自己判落地、自己上锁（不是我们硬停）
+            # 成功判据（按约定）：真值确认"落在甲板上"一次即可
+            if self.true_horiz < 0.30 and self.true_above < 0.05:
                 if self.settle_start == 0.0:
                     self.settle_start = t
-                elif t - self.settle_start > 3.0:
-                    self.state = "touchdown"
-                    self.send_cmd(CMD_ARM_DISARM, 0.0, 21196.0)   # 强制上锁 → 桨停
+                elif t - self.settle_start > 0.3:
+                    self.state = "landed"
                     self.finished = True
                     self.get_logger().info(
-                        f"坐实（真值：高于板面 {self.true_above:+.2f} m，"
-                        f"水平 {self.true_horiz:.2f} m）→ 强制上锁停机")
+                        f"TOUCHDOWN 成功：高于板面 {self.true_above:+.2f} m，"
+                        f"水平误差 {self.true_horiz:.2f} m，时刻 t={t:.1f}s")
+                    rclpy.shutdown()          # 触板即结束，不再空跑
+                    return
             else:
                 self.settle_start = 0.0
             return
 
-        # 5c) 已上锁：不再发送任何会触发失效保护的东西，等 demo 结束
+        # 5c) AUTO.LAND：不发设定点，等飞控自己落地并上锁
+        if self.state == "auto_land":
+            # 继续发设定点：AUTO.LAND 下 PX4 忽略它们，但万一切模式没生效，
+            # 也不至于 offboard 断流触发 RTL（刚才就是这么飞回去的）
+            self.publish_position(self.pad_ned + np.array([0.0, 0.0, -0.02]))
+            if t - self.settle_start > 2.0 and self.land_retry < 3:
+                self.land_retry += 1
+                self.settle_start = t
+                self.send_cmd(CMD_DO_SET_MODE, 1.0, AUTO_LAND_MODE)
+                self.get_logger().info(f"重试 AUTO.LAND（当前 nav_state={self.nav_state}）")
+            if not self.armed:
+                self.state = "landed"
+                self.finished = True
+                self.get_logger().info("飞控已判定落地并自动上锁（桨停）")
+            elif int(t) % 4 == 0:
+                self.get_logger().info(f"AUTO.LAND 中：nav_state={self.nav_state} 高度 {alt:.2f} m")
+            return
+
+        # 5d) 已上锁：不再发送任何会触发失效保护的东西，等 demo 结束
         if self.state in ("touchdown", "landed"):
             self.publish_position(self.pad_ned + np.array([0.0, 0.0, 0.05]))
             return

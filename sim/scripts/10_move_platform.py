@@ -70,6 +70,7 @@ def main() -> int:
     ap.add_argument("--world", default="x650_sea")
     ap.add_argument("--model", default="ship")
     ap.add_argument("--duration", type=float, default=120.0)
+    ap.add_argument("--start-x", type=float, default=0.0, help="直线航行的起点 x（m）")
     ap.add_argument("--path", choices=["straight", "circle"], default="straight",
                     help="straight=直线航行（默认，接近真实）；circle=大半径圆弧")
     ap.add_argument("--radius", type=float, default=40.0, help="圆弧半径 m（circle 时用）")
@@ -132,6 +133,12 @@ def main() -> int:
     ok_ct = 0
     last_print = 0.0
 
+    if args.path == "straight" and args.start_x != 0.0:
+        p0 = build_pose(args.model, args.start_x, 0.0, SHIP_Z, 0.0, 0.0, args.start_yaw)
+        set_pose(p0)
+        p0.name = ""
+        time.sleep(0.1)
+
     print(f"驱动 {args.model}：R={args.radius} m  v={args.speed} m/s  "
           f"升沉 {args.heave} m/{args.heave_period}s  时长 {args.duration}s")
     try:
@@ -154,7 +161,7 @@ def main() -> int:
                 # 直线航行：沿 +x 以恒定航速前进，艏向叠加轻微摆动
                 yaw = args.start_yaw + math.radians(args.heading_amp_deg) * math.sin(
                     2 * math.pi * t / args.heading_period)
-                x = args.speed * t_move * math.cos(args.start_yaw)
+                x = args.start_x + args.speed * t_move * math.cos(args.start_yaw)
                 y = args.speed * t_move * math.sin(args.start_yaw)
             z = SHIP_Z + args.heave * math.sin(2 * math.pi * t / args.heave_period)
             roll = math.radians(args.roll_deg) * math.sin(2 * math.pi * t / args.heave_period + 0.6)

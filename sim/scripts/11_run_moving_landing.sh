@@ -73,11 +73,17 @@ PY
 set +u; source /opt/ros/jazzy/setup.bash; source ~/x650_ws/install/setup.bash
 setsid nohup env PYTHONPATH=/usr/lib/python3/dist-packages:$PYTHONPATH python3 scripts/15_tie_down.py --duration 230 > "$WS/logs/tiedown.txt" 2>&1 &
 setsid nohup env PYTHONPATH=/usr/lib/python3/dist-packages:$PYTHONPATH python3 scripts/12_log_pose.py --world x650_sea --duration 220 --csv "$WS/logs/pose_$(date +%H%M%S).csv" > "$WS/logs/pose_log.txt" 2>&1 &
-setsid nohup env PYTHONPATH=/usr/lib/python3/dist-packages:$PYTHONPATH python3 scripts/10_move_platform.py --world x650_sea --delay 12 --start-yaw 0 \
+setsid nohup env PYTHONPATH=/usr/lib/python3/dist-packages:$PYTHONPATH python3 scripts/10_move_platform.py --world x650_sea --delay 12 --start-yaw 0 --start-x -40 --speed 1.5 \
    --duration 240 --csv "$WS/logs/ship_live3.csv" > "$WS/logs/ship_live3.log" 2>&1 &
 sleep 3
 timeout 120 ros2 run x650_offboard moving_landing --ros-args -p alt:=2.5 > "$LOG" 2>&1
 echo "[$(date +%H:%M:%S)] 节点结束" >> "$WS/logs/live_chain3.log"
+# 触板即停：立刻收掉仿真与录制
+PIDS=$(ps -eo pid,args | awk '/move_platf|moving_landing|MicroXRCEAgent|bin\/px4|12_log_pose|15_tie|gz sim/ && !/awk/ && !/grep/ {print $1}')
+[ -n "$PIDS" ] && kill -9 $PIDS 2>/dev/null
+for _p in $(pgrep -x ruby 2>/dev/null); do tr '\0' ' ' < /proc/$_p/cmdline 2>/dev/null | grep -q "gz sim" && kill -9 $_p; done
+RESULT=$(grep -a "TOUCHDOWN" "$LOG" | tail -1)
+[ -n "$RESULT" ] && echo "[$(date +%H:%M:%S)] $RESULT" >> "$WS/logs/live_chain3.log"
 if [ -n "${REC_PID:-}" ]; then
   kill -TERM "$REC_PID" 2>/dev/null; for i in $(seq 1 25); do kill -0 "$REC_PID" 2>/dev/null || break; sleep 1; done
   kill -9 "$REC_PID" 2>/dev/null
