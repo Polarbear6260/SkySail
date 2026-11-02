@@ -25,7 +25,7 @@ AGENT_BIN="${AGENT_BIN:-$HOME/tools/Micro-XRCE-DDS-Agent/build2/MicroXRCEAgent}"
 SKYSAIL="${SKYSAIL:-$HOME/planning_ws/src/SkySail}"
 WX650="${WX650:-$HOME/x650_ws}"
 
-GUI=1; RECORD=1; DASHBOARD=0; PERCEPTION=""; PERCEPTION_SEED="" SHIP_SPEED=1.5; SHIP_START_X=-40; SHIP_DELAY=12; TIMEOUT=150
+GUI=1; RECORD=1; DASHBOARD=0; PERCEPTION=""; PERCEPTION_SEED=""; GPS_COARSE="" SHIP_SPEED=1.5; SHIP_START_X=-40; SHIP_DELAY=12; TIMEOUT=150
 DOCK_X=0; DOCK_Y=16; DOCK_Z=1.02          # 起飞台台面（与 world 中的 dock 一致）
 CRUISE_ALT=10
 
@@ -36,6 +36,7 @@ while [ $# -gt 0 ]; do
     --dashboard) DASHBOARD=1 ;;
     --perception) PERCEPTION="$2"; shift ;;   # "延迟s,位置噪声m,丢帧概率"
     --perception-seed) PERCEPTION_SEED="$2"; shift ;;
+    --gps-coarse) GPS_COARSE="$2"; shift ;;   # "噪声m,跳变概率"
     --ship-speed) SHIP_SPEED="$2"; shift ;;
     --ship-start-x) SHIP_START_X="$2"; shift ;;
     --timeout) TIMEOUT="$2"; shift ;;
@@ -60,7 +61,7 @@ say "   OK（PX4=$PX4_DIR）"
 
 say "== 1/7 清理残留 =="
 PIDS=$(ps -eo pid,args | awk -v me=$$ -v dad=$PPID \
-  '/10_move_platform|12_log_pose|18_perception|MicroXRCEAgent|bin\/px4|x650_offboard\/lib/ && !/awk/ && !/grep/ {print $1}' \
+  '/10_move_platform|12_log_pose|18_perception|19_gps_source|MicroXRCEAgent|bin\/px4|x650_offboard\/lib/ && !/awk/ && !/grep/ {print $1}' \
   | grep -vxE "($$|$PPID)" || true)
 [ -n "$PIDS" ] && kill -9 $PIDS 2>/dev/null
 for p in $(pgrep -x ruby 2>/dev/null); do
@@ -156,7 +157,17 @@ if [ "$DASHBOARD" = "1" ]; then
   sleep 2
 fi
 
-PAD_POSE_TOPIC="/ship/pad_pose"; PAD_TWIST_TOPIC="/ship/pad_twist"
+PAD_POSE_TOPIC="/ship/pad_pose"; PAD_TWIST_TOPIC="/ship/pad_twist"; GPS_TOPIC=""
+if [ -n "$GPS_COARSE" ]; then
+  IFS=',' read -r G_NOISE G_JUMP <<< "$GPS_COARSE"
+  say "   GPS 级粗定位：σ=${G_NOISE:-1.5}m 跳变 ${G_JUMP:-0.02}"
+  setsid nohup python3 "$WS/scripts/19_gps_source.py" --rate 1 \
+    --noise "${G_NOISE:-1.5}" --jump-p "${G_JUMP:-0.02}" \
+    > "$WS/logs/gps-$TS.log" 2>&1 &
+  GPS_PID=$!
+  GPS_TOPIC="/ship/pad_pose_gps"
+  sleep 1
+fi
 if [ -n "$PERCEPTION" ]; then
   IFS=',' read -r P_DELAY P_NOISE P_DROP <<< "$PERCEPTION"
   say "   感知劣化：延迟 ${P_DELAY}s 噪声 ${P_NOISE}m 丢帧 ${P_DROP}"
@@ -176,11 +187,12 @@ timeout "$TIMEOUT" ros2 run x650_offboard moving_landing --ros-args \
   -p cruise_alt:="${CRUISE_ALT}.0" \
   -p skysail_path:="$SKYSAIL" \
   -p pad_pose_topic:="$PAD_POSE_TOPIC" \
-  -p pad_twist_topic:="$PAD_TWIST_TOPIC" > "$LOG" 2>&1
+  -p pad_twist_topic:="$PAD_TWIST_TOPIC" \
+  -p gps_pose_topic:="$GPS_TOPIC" > "$LOG" 2>&1
 
 # —— 收尾：立刻停掉一切 ——
 PIDS=$(ps -eo pid,args | awk \
-  '/10_move_platform|12_log_pose|18_perception|MicroXRCEAgent|bin\/px4|x650_offboard\/lib/ && !/awk/ && !/grep/ {print $1}' \
+  '/10_move_platform|12_log_pose|18_perception|19_gps_source|MicroXRCEAgent|bin\/px4|x650_offboard\/lib/ && !/awk/ && !/grep/ {print $1}' \
   | grep -vxE "($$|$PPID)" || true)
 [ -n "$PIDS" ] && kill -9 $PIDS 2>/dev/null
 for p in $(pgrep -x ruby 2>/dev/null); do
@@ -188,6 +200,7 @@ for p in $(pgrep -x ruby 2>/dev/null); do
 done
 [ -n "${DASH_PID:-}" ] && kill -9 $DASH_PID 2>/dev/null
 [ -n "${PERC_PID:-}" ] && kill -9 $PERC_PID 2>/dev/null
+[ -n "${GPS_PID:-}" ] && kill -9 $GPS_PID 2>/dev/null
 if [ -n "${REC_PID:-}" ]; then
   kill -TERM "$REC_PID" 2>/dev/null
   for i in $(seq 1 20); do kill -0 "$REC_PID" 2>/dev/null || break; sleep 1; done

@@ -65,6 +65,8 @@ class MovingLanding(Node):
         # 平台位姿话题（默认真值；接感知仿真器时指向 /ship/pad_pose_d）
         self.declare_parameter("pad_pose_topic", "/ship/pad_pose")
         self.declare_parameter("pad_twist_topic", "/ship/pad_twist")
+        self.declare_parameter("gps_pose_topic", "")          # 空=不用 GPS 粗定位
+        self.declare_parameter("handover_range", 10.0)        # 交接距离 m
         q = fmu_qos()
         self.pub_mode = self.create_publisher(OffboardControlMode, "/fmu/in/offboard_control_mode", q)
         self.pub_sp = self.create_publisher(TrajectorySetpoint, "/fmu/in/trajectory_setpoint", q)
@@ -77,6 +79,10 @@ class MovingLanding(Node):
         pose_topic = str(self.get_parameter("pad_pose_topic").value)
         twist_topic = str(self.get_parameter("pad_twist_topic").value)
         self.create_subscription(PoseStamped, pose_topic, self.on_pad_pose, 10)
+        gps_topic = str(self.get_parameter("gps_pose_topic").value)
+        if gps_topic:
+            self.create_subscription(PoseStamped, gps_topic, self.on_gps_pose, 10)
+            self.get_logger().info(f"远距离段使用 GPS 级粗定位：{gps_topic}")
         self.create_subscription(TwistStamped, twist_topic, self.on_pad_twist, 10)
 
         self.declare_parameter("alt", 2.5)
@@ -108,6 +114,10 @@ class MovingLanding(Node):
         self.pos_ned: np.ndarray | None = None
         self.vel_ned: np.ndarray | None = None
         self.pad_ned: np.ndarray | None = None
+        self.pad_ned_fine: np.ndarray | None = None
+        self.pad_ned_gps: np.ndarray | None = None
+        self._pad_msgs = 0
+        self._pad_seen = -1
         self.pad_vel_ned = np.zeros(3)
         self.armed = False
         self.nav_state = 0
@@ -202,16 +212,41 @@ class MovingLanding(Node):
         self.armed = (m.arming_state == 2)
         self.nav_state = int(m.nav_state)
 
+    def on_gps_pose(self, m: PoseStamped) -> None:
+        world_enu = np.array([m.pose.position.x, m.pose.position.y, m.pose.position.z])
+        self.pad_ned_gps = enu_to_ned(world_enu - self.origin_enu)
+        self._pad_msgs += 1
+
+    def _blend_pad(self) -> None:
+        """按距离在"GPS 粗定位"和"精定位"之间平滑加权，避免交接跳变。"""
+        fine, gps = self.pad_ned_fine, self.pad_ned_gps
+        if fine is None and gps is None:
+            return
+        if fine is None:
+            self.pad_ned = gps
+        elif gps is None or self.pos_ned is None:
+            self.pad_ned = fine
+        else:
+            d = float(np.hypot(self.pos_ned[0] - fine[0], self.pos_ned[1] - fine[1]))
+            rng = float(self.get_parameter("handover_range").value)
+            w = float(np.clip((rng - d) / (rng * 0.5), 0.0, 1.0))   # 近→1，远→0
+            self.pad_ned = (1.0 - w) * gps + w * fine
+        # 只在新测量到达时记录，避免用重复值污染速度估计（GPS 只有 1 Hz）
+        if getattr(self, "_yaw_enu", None) is not None and self._pad_msgs != self._pad_seen:
+            self._pad_seen = self._pad_msgs
+            self.history.push(self.now(), self.pad_ned, -self._yaw_enu)
+
     def on_land(self, m: VehicleLandDetected) -> None:
         self.landed = bool(m.landed)
 
     def on_pad_pose(self, m: PoseStamped) -> None:
         # 世界 ENU − 起飞点（PX4 本地原点）→ NED，得到 PX4 本地系坐标
         world_enu = np.array([m.pose.position.x, m.pose.position.y, m.pose.position.z])
-        self.pad_ned = enu_to_ned(world_enu - self.origin_enu)
-        q = m.pose.orientation
-        yaw_enu = math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
-        self.history.push(self.now(), self.pad_ned, -yaw_enu)   # NED 下艏向符号相反
+        self.pad_ned_fine = enu_to_ned(world_enu - self.origin_enu)
+        self._pad_msgs += 1
+        self._yaw_enu = math.atan2(2.0 * (m.pose.orientation.w * m.pose.orientation.z
+                                         + m.pose.orientation.x * m.pose.orientation.y),
+                                   1.0 - 2.0 * (m.pose.orientation.y ** 2 + m.pose.orientation.z ** 2))
 
     def on_gz_pose(self, msg) -> None:
         """从 Gazebo 读真值，算机体相对落点板的真实水平距离与高度。"""
@@ -333,6 +368,7 @@ class MovingLanding(Node):
                 self.get_logger().info("请求 OFFBOARD")
             return
 
+        self._blend_pad()
         if self.pos_ned is None or self.pad_ned is None:
             self.publish_position(np.array([0.0, 0.0, -self.alt]))
             return
