@@ -2,3 +2,7 @@ __pycache__/
 *.py[cod]
 .venv/
 .pytest_cache/
+
+# 运行产物（视频、日志、真值 CSV）
+sim/logs/
+sim/results/*.mp4

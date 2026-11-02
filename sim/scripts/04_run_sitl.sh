@@ -12,6 +12,16 @@
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
+kill_gz_leftovers() {
+  # gz 的 CLI 是 ruby 进程，pkill -x gz 抓不到；必须按 cmdline 匹配
+  for p in $(pgrep -x ruby 2>/dev/null); do
+    if tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null | grep -q "gz sim"; then
+      kill -9 "$p" 2>/dev/null || true
+    fi
+  done
+  pkill -x px4 2>/dev/null || true
+}
+
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(dirname "$HERE")"
 PX4_DIR="${PX4_DIR:-$HOME/PX4-Autopilot}"
@@ -46,7 +56,7 @@ mkdir -p "$ROOT/logs"
 LOG="$ROOT/logs/sitl-$(date +%Y%m%d-%H%M%S).log"
 
 # 清掉上一次残留的实例（PX4 用 instance 锁，残留会让新实例直接退出）
-pkill -f "px4_sitl_default/bin/p[x]4" 2>/dev/null && sleep 1
+kill_gz_leftovers && sleep 1
 
 echo "模型 $MODEL ｜ 世界 $WORLD ｜ 无头=$HEADLESS ｜ 日志 $LOG"
 cd "$PX4_DIR"

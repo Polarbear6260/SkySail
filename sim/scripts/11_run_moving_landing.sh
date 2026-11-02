@@ -1,4 +1,5 @@
 #!/bin/bash
+# ⚠️ 已废弃：新的完整流程见 16_moving_landing_demo.sh（含触板即停、录制、调试面板）
 # 从 Gazebo 窗口出现的那一刻开始录，直到 demo 结束
 WS=/home/green/文档/deepseek-harness/default-workspace/px4-gz-sim
 cd "$WS"
