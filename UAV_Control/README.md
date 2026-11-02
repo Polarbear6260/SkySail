@@ -1,27 +1,25 @@
-# UAV Control
+# UAV 控制（着陆外环）
 
-This folder contains the UAV outer-loop landing controller. It is intentionally
-split into a shared LQR core and two reference-generation layers:
+本目录是无人机着陆的外环控制器。结构上刻意拆成**共享的 LQR 核心**和**两套参考生成层**：
 
 ```text
 UAV_Control/
-├── aug_lqr.py                 # Shared preview-augmented LQR core
-├── UAV_params.py              # Vehicle and LQR parameters
+├── aug_lqr.py                 # 共享的 preview 增强型 LQR 核心
+├── UAV_params.py              # 机体参数与 LQR 权重
 ├── direct/
-│   └── point_landing.py       # Fixed landing point; no MIONet
+│   └── point_landing.py       # 固定落点（不依赖 MIONet）
 ├── mionet/
-│   └── reference_controller.py # Predictor-to-LQR adapter
+│   └── reference_controller.py # 预测器 → LQR 的适配层
 ├── examples/
 └── tests/
 ```
 
-## Two control modes
+## 两种控制模式
 
-### 1. Direct landing point
+### 1. 直接给定落点
 
-Use `PointLandingController` when the landing point is supplied directly. It
-uses the fixed point as the position reference and assumes zero reference
-velocity. It does not import, call, or require MIONet.
+落点已知时用 `PointLandingController`：把固定点当位置参考，参考速度视为零，
+不导入、不调用、也不依赖 MIONet。
 
 ```python
 from UAV_Control.direct import PointLandingController
@@ -33,19 +31,18 @@ command = controller.compute_control(
 )
 ```
 
-### 2. MIONet-derived reference
+### 2. 由 MIONet 预测参考
 
-Use `MIONetLandingController` when an external predictor should provide the
-moving landing reference. The controller does not depend on PyTorch or on a
-specific checkpoint format. A model-specific adapter must convert its output
-into `LandingReference`:
+移动平台着陆时，用 `MIONetLandingController`：由外部预测器给出**移动的着陆参考**。
+控制器本身不依赖 PyTorch，也不绑定特定的权重文件格式；模型专属的适配器负责把网络输出
+转成 `LandingReference`：
 
 ```python
 from UAV_Control.mionet import LandingReference, MIONetLandingController
 
 
 def predict_reference(observation):
-    # Run MIONet and convert its output into the UAV controller frame.
+    # 跑 MIONet，并把输出转换到控制器坐标系
     return LandingReference(
         position=(x, y, z),
         velocity=(vx, vy, vz),
@@ -61,38 +58,32 @@ command = controller.compute_control(
 )
 ```
 
-`LandingReference` must be expressed in the same coordinate frame and units as
-the LQR inputs: position in metres, velocity in metres per second, and
-curvature in inverse metres. The adapter is the boundary where MIONet output
-frames, units, latency, and forecast horizon must be handled.
+`LandingReference` 必须与 LQR 输入用**同一坐标系和单位**：位置用米、速度用米每秒、
+曲率用米的倒数。适配器就是处理这些边界的唯一位置——MIONet 输出的坐标系、单位、延迟、
+预测时域，都在这里对齐。
 
-The current `MIONet_v1` models predict ACE observation channels. Those outputs
-are not automatically a physical deck pose or a UAV landing reference.
-Therefore this package does **not** silently connect an `ACEModel` checkpoint
-directly to the controller. A validated conversion from observation channels to
-landing position, velocity, and curvature must be implemented in a
-model-specific adapter first.
+当前的 `MIONet_v1` 模型预测的是 **ACE 观测通道**，其输出并不是物理上的甲板位姿，
+也不是无人机的着陆参考。因此本包**不会**把 `ACEModel` 权重直接接到控制器上；
+必须先实现“观测通道 → 着陆位置/速度/曲率”的转换，并验证通过。
 
-## Shared controller scope
+## 共享控制器的范围
 
-`AugmentedLQRController` outputs a saturated three-axis acceleration command
-`[ax, ay, az]` in m/s². It does not implement attitude control, motor mixing,
-ROS, PX4, or MAVLink.
+`AugmentedLQRController` 只输出**饱和后的三轴加速度指令** `[ax, ay, az]`（m/s²），
+不包含姿态控制、电机混控、ROS、PX4 或 MAVLink。
 
-The default vehicle is a DJI F450-class engineering approximation, not an
-official DJI flight-controller parameter set. Replace `F450_PARAMS` in
-`UAV_params.py` when a measured airframe model is available.
+默认机体是 DJI F450 级别的工程近似，**不是** DJI 官方飞控参数。等有了实测机体模型，
+替换 `UAV_params.py` 里的 `F450_PARAMS` 即可（本仓库的仿真是换成 X650 的 BOM 参数）。
 
-## Run
+## 运行
 
-From the project root:
+在项目根目录：
 
-```powershell
+```bash
 python -m unittest discover -s UAV_Control -p "test_*.py" -v
 python -m UAV_Control.examples.demo_aug_lqr
 ```
 
-The LQR core remains usable directly when a caller already has a reference:
+调用方已有参考时，也可以直接用 LQR 核心：
 
 ```python
 from UAV_Control import AugmentedLQRController
