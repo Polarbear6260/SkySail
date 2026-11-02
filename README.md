@@ -1,109 +1,50 @@
-# UAV 控制（着陆外环）
+# SkySail · X650 移动平台着陆
 
-本目录是无人机着陆的外环控制器。结构上刻意拆成**共享的 LQR 核心**和**两套参考生成层**：
+科研用无人机（**Holybro X650 V2 + CUAV V6X + Jetson Orin Nano + Gemini 335L**）的
+**自主着陆控制算法**与配套仿真环境。核心目标：让无人机落到**移动平台**（海上船只）上。
 
 ```text
-UAV_Control/
-├── aug_lqr.py                 # 共享的 preview 增强型 LQR 核心
-├── UAV_params.py              # 机体参数与 LQR 权重
-├── direct/
-│   └── point_landing.py       # 固定落点（不依赖 MIONet）
-├── mionet/
-│   └── reference_controller.py # 预测器 → LQR 的适配层
-├── examples/
-└── tests/
+UAV_Control/     着陆外环控制库（LQR + preview 前馈，可接 MIONet 预测器）
+sim/             PX4 SITL + Gazebo Harmonic 仿真环境（按 BOM 参数建模）
 ```
 
-## 两种控制模式
-
-### 1. 直接给定落点
-
-落点已知时用 `PointLandingController`：把固定点当位置参考，参考速度视为零，
-不导入、不调用、也不依赖 MIONet。
-
-```python
-from UAV_Control.direct import PointLandingController
-
-controller = PointLandingController(landing_position=(10.0, 2.0, 0.0))
-command = controller.compute_control(
-    position=(8.0, 2.5, 3.0),
-    velocity=(0.2, 0.0, -0.5),
-)
-```
-
-### 2. 由 MIONet 预测参考
-
-移动平台着陆时，用 `MIONetLandingController`：由外部预测器给出**移动的着陆参考**。
-控制器本身不依赖 PyTorch，也不绑定特定的权重文件格式；模型专属的适配器负责把网络输出
-转成 `LandingReference`：
-
-```python
-from UAV_Control.mionet import LandingReference, MIONetLandingController
-
-
-def predict_reference(observation):
-    # 跑 MIONet，并把输出转换到控制器坐标系
-    return LandingReference(
-        position=(x, y, z),
-        velocity=(vx, vy, vz),
-        curvature_preview=curvature_values,
-    )
-
-
-controller = MIONetLandingController(predict_reference)
-command = controller.compute_control(
-    position=uav_position,
-    velocity=uav_velocity,
-    observation=mionet_input,
-)
-```
-
-`LandingReference` 必须与 LQR 输入用**同一坐标系和单位**：位置用米、速度用米每秒、
-曲率用米的倒数。适配器就是处理这些边界的唯一位置——MIONet 输出的坐标系、单位、延迟、
-预测时域，都在这里对齐。
-
-当前的 `MIONet_v1` 模型预测的是 **ACE 观测通道**，其输出并不是物理上的甲板位姿，
-也不是无人机的着陆参考。因此本包**不会**把 `ACEModel` 权重直接接到控制器上；
-必须先实现“观测通道 → 着陆位置/速度/曲率”的转换，并验证通过。
-
-## 共享控制器的范围
-
-`AugmentedLQRController` 只输出**饱和后的三轴加速度指令** `[ax, ay, az]`（m/s²），
-不包含姿态控制、电机混控、ROS、PX4 或 MAVLink。
-
-默认机体是 DJI F450 级别的工程近似，**不是** DJI 官方飞控参数。等有了实测机体模型，
-替换 `UAV_params.py` 里的 `F450_PARAMS` 即可（本仓库的仿真是换成 X650 的 BOM 参数）。
-
-## 运行
-
-在项目根目录：
-
-```bash
-python -m unittest discover -s UAV_Control -p "test_*.py" -v
-python -m UAV_Control.examples.demo_aug_lqr
-```
-
-调用方已有参考时，也可以直接用 LQR 核心：
-
-```python
-from UAV_Control import AugmentedLQRController
-```
-
-## 仿真环境
-
-面向 X650 机体的 PX4 SITL + Gazebo Harmonic 环境（按 BOM 参数建模，含深度相机代理和
-用于 3DVFH* 测试的障碍世界），并已实现**移动平台着陆**（随机航行任务的船 + 实时调试面板）：
-
-- 环境总览：[`sim/README.md`](sim/README.md)
-- 复现指南（含一键 demo）：[`sim/docs/03-reproduce.md`](sim/docs/03-reproduce.md)
-- BOM → 仿真参数与不确定度：[`sim/docs/01-bom-to-sim.md`](sim/docs/01-bom-to-sim.md)
-- 移动平台着陆全过程记录：[`sim/docs/04-moving-platform.md`](sim/docs/04-moving-platform.md)
-- 程序结构图（Mermaid）：[`sim/docs/05-architecture.md`](sim/docs/05-architecture.md)
-- 基准结果：[`sim/results/2026-10-31-x650-sitl-baseline.md`](sim/results/2026-10-31-x650-sitl-baseline.md)
-
-一键跑移动平台着陆：
+## 快速开始
 
 ```bash
 cd sim
-./scripts/16_moving_landing_demo.sh --dashboard    # 带 GUI、录制和实时面板
+./scripts/16_moving_landing_demo.sh              # 一键：船随机航行 → 起飞 10 m → 追船 → 触板
+./scripts/16_moving_landing_demo.sh --dashboard  # 同上，另开实时调试面板
 ```
+
+约 75 秒自动结束，输出控制日志、Gazebo 真值 CSV 和视频到 `sim/logs/`。
+
+## 目前做到哪一步
+
+| 能力 | 结果 |
+|---|---|
+| 悬停油门（与 BOM 对照） | 52.72% vs 53.00% |
+| 固定点着陆 | 落点误差 **2.6 cm** |
+| **移动平台着陆** | 船速 1–2 m/s 随机航行，落点误差 **8–21 cm**，多次验证 |
+| 控制结构 | 观测历史 → 预测器 → `LandingReference` → LQR（含曲率 preview 前馈） |
+| 可复现性 | 每次随机任务打印 `seed=`，`SHIP_SEED=N` 可完全复现 |
+
+## 文档
+
+| 文档 | 内容 |
+|---|---|
+| [`sim/README.md`](sim/README.md) | 仿真环境总览 |
+| [`sim/docs/01-bom-to-sim.md`](sim/docs/01-bom-to-sim.md) | BOM → 仿真参数、惯量/质心、参数来源与不确定度 |
+| [`sim/docs/02-acceptance.md`](sim/docs/02-acceptance.md) | 协议验收数据 |
+| [`sim/docs/03-reproduce.md`](sim/docs/03-reproduce.md) | 从零复现指南（含一键 demo） |
+| [`sim/docs/04-moving-platform.md`](sim/docs/04-moving-platform.md) | 移动平台着陆全过程与已知限制 |
+| [`sim/docs/05-architecture.md`](sim/docs/05-architecture.md) | 程序结构图（Mermaid） |
+| [`sim/ros2/README.md`](sim/ros2/README.md) | ROS 2 + uXRCE-DDS 控制链路 |
+| [`UAV_Control/README.md`](UAV_Control/README.md) | **控制库 API 细节**（`PointLandingController` / `MIONetLandingController`） |
+
+## 已知限制
+
+- 仿真中着陆后机体仍会从运动学甲板上滑落（PX4 持有模型位姿 + 甲板是 `set_pose` 瞬移），
+  属建模问题；按约定"触板一次"即判定算法成功。
+- `MIONet` 目前是"恒速 + 恒转向"基线预测器，接口与上游 `ReferencePredictor` 一致，
+  换成训练好的网络即可。
+- 不模拟电池放电曲线、Jetson 算力、数传链路、双目视差；续航与链路结论以真机为准。
