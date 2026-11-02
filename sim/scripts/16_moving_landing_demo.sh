@@ -95,12 +95,31 @@ say "== 4/7 设置仿真参数 =="
 
 if [ "$GUI" = "1" ]; then
   say "== 5/7 起 GUI =="
-  ( cd "$WS" && setsid nohup gz sim -g --gui-config "$HOME/.gz/sim/8/gui-demo.config" \
+  GUI_CFG="$WS/gz_extras/gui-min.config"
+  [ -f "$GUI_CFG" ] || GUI_CFG="$HOME/.gz/sim/8/gui-demo.config"
+  cp "$GUI_CFG" "$HOME/.gz/sim/8/gui-active.config"
+  ( cd "$WS" && setsid nohup gz sim -g --gui-config "$HOME/.gz/sim/8/gui-active.config" \
       > "$WS/logs/gui-$TS.log" 2>&1 & )
   for i in $(seq 1 60); do
     xwininfo -root -tree 2>/dev/null | grep -q '"Gazebo Sim".*gz-sim-gui' && break
     sleep 0.5
   done
+  /home/green/planning_ws/.venv/bin/python - <<'PYX' 2>/dev/null
+from Xlib import display
+d = display.Display(); root = d.screen().root; tgt=[None]
+def walk(w):
+    try:
+        for c in w.query_tree().children:
+            try:
+                if (c.get_wm_name() or "").strip() == "Gazebo Sim": tgt[0]=c
+            except Exception: pass
+            walk(c)
+    except Exception: pass
+walk(root)
+if tgt[0]:
+    tgt[0].configure(width=1280, height=720); d.sync()
+PYX
+  sleep 1
   if [ "$RECORD" = "1" ]; then
     FF=$(/home/green/planning_ws/.venv/bin/python -c "import imageio_ffmpeg;print(imageio_ffmpeg.get_ffmpeg_exe())" 2>/dev/null)
     GEO=$(xwininfo -root -tree 2>/dev/null | grep '"Gazebo Sim"' | grep -v mutter | head -1)
@@ -108,7 +127,7 @@ if [ "$GUI" = "1" ]; then
     AB=$(echo "$GEO" | grep -oE '\+[0-9]+\+[0-9]+' | tail -1 | sed 's/^+//;s/+/ /')
     GW=$(echo "$SZ" | cut -dx -f1); GH=$(echo "$SZ" | cut -dx -f2 | cut -d+ -f1)
     GX=$(echo "$AB" | cut -d' ' -f1); GY=$(echo "$AB" | cut -d' ' -f2)
-    "$FF" -y -loglevel error -f x11grab -video_size "${GW}x${GH}" -framerate 15 \
+    "$FF" -y -loglevel error -f x11grab -video_size "${GW}x${GH}" -framerate 25 \
       -i ":1+${GX},${GY}" -t $((TIMEOUT + 30)) -vf scale=1280:-2 -pix_fmt yuv420p "$MP4" &
     REC_PID=$!
     say "   录制中 → $MP4"

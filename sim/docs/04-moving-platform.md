@@ -426,3 +426,26 @@ python3 scripts/17_debug_dashboard.py
 
 实测截图见 `sim/results/2026-11-02-debug-dashboard.png`
 （水平误差 51 m → 0.57 m，高于板面 +0.03 m）。
+
+## 录制帧率优化（2026-11-02 18:45）
+
+原来 GUI 抓屏只有 **3–4 fps**，原因是软件渲染 + 2000×1690 大窗口 + 实体树/检查器等面板。
+
+优化后实测 **≈18 fps（提升约 5 倍）**：
+
+| 改动 | 说明 |
+|---|---|
+| 精简 GUI 配置 `gz_extras/gui-min.config` | 只保留 3D 场景必需插件，去掉实体树、组件检查器、变换控件、Marker 管理等 |
+| 窗口固定 **1280×720** | 脚本在窗口出现后自动 resize（Xlib） |
+| 世界关闭阴影 | `<shadows>false</shadows>` |
+| 渲染引擎 **ogre**（替代 ogre2） | 软件渲染下更快 |
+| 录制 **25 fps** | 接近实际渲染帧率，减少重复帧 |
+
+**关于 Gazebo 内录**：gz 自带三种记录手段——`gz record`（话题级，出 .db3 可回放）、
+`camera-video-recorder-system` 插件（相机传感器直接出 mp4/ogv/avi）、GUI 内置录制插件。
+本机实测：**传感器渲染路径不可用**（EGL 报 `failed to create dri2 screen`，headless 建不出
+渲染上下文），所以 `camera-video-recorder-system` 不产文件；GUI 内置录制插件在此版本
+（gz-gui 8.15）未安装。因此目前仍用桌面抓屏（x11grab），但已优化到 18 fps。
+
+> 世界里的船载相机 `deck_cam` 已加好（朝船尾看落点板），一旦解决 EGL/GPU 问题即可直接用
+> 内录替代抓屏。
