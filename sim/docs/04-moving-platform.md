@@ -365,3 +365,42 @@ TOUCHDOWN 成功：高于板面 +0.02 m，水平误差 0.20 m，时刻 t=43.7s
 SHIP_SEED=91218 ./scripts/16_moving_landing_demo.sh # 复现上面这次
 SHIP_FIXED=1 ./scripts/16_moving_landing_demo.sh    # 关闭随机
 ```
+
+## 完整算法：预测 + preview 前馈（2026-11-02 18:30）
+
+按上游规划的结构接上了 `MIONetLandingController`：
+
+```
+观测历史（PadHistory）→ ReferencePredictor → LandingReference(position, velocity, curvature_preview)
+                                        → AugmentedLQRController（含 preview 前馈）→ 加速度指令
+```
+
+**预测器**（`sim/ros2/x650_offboard/x650_offboard/predictors.py`，MIONet 的基线替代）：
+
+- 位置/速度：对最近 2 s 观测做最小二乘拟合，外推到 `horizon` 秒后
+- 曲率：κ = ω_yaw / v（由艏向角速度与速度估计）
+- preview 序列：κ 复制 `preview_horizon`=10 份，输入 LQR 的曲率前馈项（`curvature_weight=1e-3`，上游默认）
+
+**关键改动：预测视界随阶段收缩**（否则末端会追到船前方 `v·h` 处）：
+
+| 阶段 | horizon |
+|---|---|
+| transit | 0.8 s |
+| approach | 0.3 s |
+| descend | 0.2 s |
+| settle | 0.0 s |
+
+另：控制器每 1 s 用平台当前速度与横向方向重建一次 LQR 增益（`reference_speed` / `lateral_direction`）。
+
+**实测（随机任务）**：
+
+| seed | 高于板面 | 水平误差 | 触板时刻 |
+|---|---|---|---|
+| 11 | +0.00 m | 0.14 m | 25.7 s |
+| 22 | −0.02 m | 0.11 m | 29.6 s |
+| 随机 | −0.08 m | 0.08 m | 24.8 s |
+
+**挡板已按要求移除**（落点板只保留红色圆盘 + 白圈 + 高摩擦碰撞体）。
+
+> 与规划的差别仅剩：predictor 目前是"恒速+恒转向"基线，换成训练好的 MIONet 网络即可
+> （接口 `ReferencePredictor` 不变）。

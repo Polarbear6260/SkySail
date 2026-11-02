@@ -115,6 +115,7 @@ class MovingLanding(Node):
         self.offboard_req = False
         self.settle_start = 0.0
         self.land_retry = 0
+        self.last_rebuild = 0.0
         self.land_err = float("nan")
 
         if HAS_GZ:
@@ -133,7 +134,9 @@ class MovingLanding(Node):
         if path not in sys.path:
             sys.path.insert(0, path)
         from UAV_Control import AugmentedLQRController          # noqa: PLC0415
+        from UAV_Control.mionet.reference_controller import MIONetLandingController  # noqa: PLC0415
         from UAV_Control.UAV_params import LQRParams, UAVParams  # noqa: PLC0415
+        from x650_offboard.predictors import ConstantTurnPredictor, PadHistory  # noqa: PLC0415
 
         uav = UAVParams(
             model_name="Holybro X650 (BOM)",
@@ -146,13 +149,40 @@ class MovingLanding(Node):
             max_tilt_rad=float(np.deg2rad(25.0)),
             max_descent_speed_m_s=1.0,
         )
+        # 打开曲率预览前馈（上游默认 curvature_weight=1e-3）
         lqr = LQRParams(position_weight=(16.0, 16.0, 25.0),
                         velocity_weight=(4.0, 4.0, 9.0),
                         control_weight=(1.0, 1.0, 1.5),
-                        preview_horizon=10, curvature_weight=0.0,
+                        preview_horizon=10, curvature_weight=1e-3,
                         tracking_velocity_scale=4.0)
-        self.get_logger().info("已载入 SkySail LQR（X650 参数，参考速度非零）")
-        return AugmentedLQRController(uav=uav, lqr=lqr, reference_speed_m_s=1.0)
+        self.uav_params = uav
+        self.lqr_params = lqr
+        self.history = PadHistory()
+        self.predictor = ConstantTurnPredictor(horizon_s=1.0, preview_horizon=lqr.preview_horizon)
+        aug = AugmentedLQRController(uav=uav, lqr=lqr, reference_speed_m_s=1.0)
+        self.get_logger().info(
+            "已载入 SkySail LQR + MIONet 控制器结构（预测器=恒速恒转向，preview 前馈已启用）")
+        return MIONetLandingController(predictor=self.predictor, controller=aug)
+
+    def _update_gains(self) -> None:
+        """平台速度/方向变化较大时，用新的参考速度与横向方向重建 LQR 增益。"""
+        t = self.now()
+        if t - self.last_rebuild < 1.0 or self.pad_vel_ned is None:
+            return
+        self.last_rebuild = t
+        speed = float(np.hypot(self.pad_vel_ned[0], self.pad_vel_ned[1]))
+        lateral = np.array([-self.pad_vel_ned[1], self.pad_vel_ned[0], 0.0])
+        norm = np.linalg.norm(lateral)
+        lateral = lateral / norm if norm > 1e-3 else np.array([0.0, 1.0, 0.0])
+        try:
+            from UAV_Control import AugmentedLQRController  # noqa: PLC0415
+            from UAV_Control.mionet.reference_controller import MIONetLandingController  # noqa: PLC0415
+            aug = AugmentedLQRController(uav=self.uav_params, lqr=self.lqr_params,
+                                         reference_speed_m_s=max(speed, 0.3),
+                                         lateral_direction=tuple(lateral))
+            self.ctrl = MIONetLandingController(predictor=self.predictor, controller=aug)
+        except Exception as exc:  # noqa: BLE001
+            self.get_logger().warn(f"重建增益失败：{exc}")
 
     # ---------- 订阅 ----------
     def on_pos(self, m: VehicleLocalPosition) -> None:
@@ -170,6 +200,9 @@ class MovingLanding(Node):
         # 世界 ENU − 起飞点（PX4 本地原点）→ NED，得到 PX4 本地系坐标
         world_enu = np.array([m.pose.position.x, m.pose.position.y, m.pose.position.z])
         self.pad_ned = enu_to_ned(world_enu - self.origin_enu)
+        q = m.pose.orientation
+        yaw_enu = math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
+        self.history.push(self.now(), self.pad_ned, -yaw_enu)   # NED 下艏向符号相反
 
     def on_gz_pose(self, msg) -> None:
         """从 Gazebo 读真值，算机体相对落点板的真实水平距离与高度。"""
@@ -289,11 +322,11 @@ class MovingLanding(Node):
 
         # 3b) 转场：在巡航高度飞向落点板正上方
         if self.state == "transit":
+            self.predictor.horizon_s = 0.8
             lead = self.pad_vel_ned * self.lead_time
             target = self.pad_ned + lead + np.array([0.0, 0.0, -self.cruise_alt])
-            acc = self.ctrl.compute_control(self.pos_ned, self.vel_ned, target,
-                                            self.pad_vel_ned, "tracking",
-                                            np.zeros(self.ctrl.lqr.preview_horizon))
+            self._update_gains()
+            acc = self.ctrl.compute_control(self.pos_ned, self.vel_ned, self.history, "tracking")
             self.publish_accel(acc)
             # 用“到提前量目标”的水平距离判定，而不是到板本身
             d_target = float(np.hypot(self.pos_ned[0] - target[0], self.pos_ned[1] - target[1]))
@@ -309,10 +342,11 @@ class MovingLanding(Node):
 
         # 4) 进场：从巡航高度下降，目标 = 板面
         if self.state == "approach":
+            self.predictor.horizon_s = 0.3
+            self.predictor.descent_rate = 0.0
             target = self.pad_ned + np.array([0.0, 0.0, 0.02])
-            acc = self.ctrl.compute_control(self.pos_ned, self.vel_ned, target,
-                                            self.pad_vel_ned, "tracking",
-                                            np.zeros(self.ctrl.lqr.preview_horizon))
+            self._update_gains()
+            acc = self.ctrl.compute_control(self.pos_ned, self.vel_ned, self.history, "tracking")
             self.publish_accel(acc)
             if self.true_above < self.clearance and rel_v_h < self.vel_gate:
                 self.state = "descend"
@@ -324,9 +358,8 @@ class MovingLanding(Node):
         if self.state == "descend":
             target = self.pad_ned + np.array([0.0, 0.0, 0.02])
             ref_vel = self.pad_vel_ned + np.array([0.0, 0.0, self.descent_rate])
-            acc = self.ctrl.compute_control(self.pos_ned, self.vel_ned, target,
-                                            ref_vel, "touchdown",
-                                            np.zeros(self.ctrl.lqr.preview_horizon))
+            self._update_gains()
+            acc = self.ctrl.compute_control(self.pos_ned, self.vel_ned, self.history, "touchdown")
             self.publish_accel(acc)
             if rel_h > 0.35:
                 self.state = "approach"
@@ -346,9 +379,10 @@ class MovingLanding(Node):
             # 加速度控制 + 甲板速度前馈：位置环追移动目标有稳态滞后，会滑到板边
             target = self.pad_ned + np.array([0.0, 0.0, -0.02])   # 板面之上 2 cm
             ref_vel = self.pad_vel_ned                              # 不再压下去
-            acc = self.ctrl.compute_control(self.pos_ned, self.vel_ned, target,
-                                            ref_vel, "touchdown",
-                                            np.zeros(self.ctrl.lqr.preview_horizon))
+            self.predictor.descent_rate = 0.15
+            self.predictor.horizon_s = 0.0
+            self._update_gains()
+            acc = self.ctrl.compute_control(self.pos_ned, self.vel_ned, self.history, "touchdown")
             self.publish_accel(acc)
             # 船在升沉，PX4 的落地检测永远不会判 True（世界系里一直在动），
             # 所以自己判：相对板面高度稳定 + 相对速度小 → 认为已坐实
