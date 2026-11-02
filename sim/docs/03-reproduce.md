@@ -276,6 +276,33 @@ printf 'Acquire::http::Proxy "http://127.0.0.1:7897";\nAcquire::https::Proxy "ht
 
 ---
 
+
+## 11. 移动平台着陆 demo（一键）
+
+全套环境装好后，验证"算法层面的移动平台着陆"只需一条命令：
+
+```bash
+cd sim
+./scripts/16_moving_landing_demo.sh            # 带 GUI + 录制（约 75 秒）
+./scripts/16_moving_landing_demo.sh --no-gui   # 无头服务器
+```
+
+它会：清场 → 起 DDS agent → 起 SITL（机体生成在固定的 `dock` 上）→ 设仿真参数 →
+起 GUI/录制 → 让船以 1.5 m/s 直线航行 → 无人机爬升 10 m → 追船 → 下降 →
+**触板判定成功即停**。
+
+预期输出（2026-11-02 实测）：
+
+```
+接触（相对高度 -0.10 m，相对速度 0.27 m/s，水平误差 0.09 m）
+TOUCHDOWN 成功：高于板面 -0.00 m，水平误差 0.24 m，时刻 t=28.5s
+```
+
+产物：`logs/run-*.log`、`logs/pose-*.csv`（Gazebo 真值）、`logs/x650-moving-*.mp4`。
+
+依赖可用环境变量覆盖：`PX4_DIR`、`AGENT_BIN`、`SKYSAIL`、`WX650`。
+细节与已知限制见 `docs/04-moving-platform.md`。
+
 ## 10. 给汇报用的材料建议
 
 1. **一致性证据**（最有力）：`06_analyze_ulog.py` 输出 → 悬停油门 52.72% vs BOM 53.00%，
