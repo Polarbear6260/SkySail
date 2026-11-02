@@ -90,4 +90,6 @@ class ConstantTurnPredictor:
         curvature = float(omega / speed) if speed > 0.2 else 0.0
         preview = tuple([curvature] * self.preview_horizon)
 
-        return LandingReference(position=pos, velocity=vel, curvature_preview=preview)
+        ref = LandingReference(position=pos, velocity=vel, curvature_preview=preview)
+        self.last_reference = ref          # 供调试面板读取
+        return ref

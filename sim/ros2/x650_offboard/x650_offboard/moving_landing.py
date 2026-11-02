@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 
@@ -36,6 +37,7 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
 
 from geometry_msgs.msg import PoseStamped, TwistStamped
+from std_msgs.msg import String
 from px4_msgs.msg import (OffboardControlMode, TrajectorySetpoint,
                           VehicleCommand, VehicleLandDetected,
                           VehicleLocalPosition, VehicleStatus)
@@ -64,6 +66,7 @@ class MovingLanding(Node):
         self.pub_mode = self.create_publisher(OffboardControlMode, "/fmu/in/offboard_control_mode", q)
         self.pub_sp = self.create_publisher(TrajectorySetpoint, "/fmu/in/trajectory_setpoint", q)
         self.pub_cmd = self.create_publisher(VehicleCommand, "/fmu/in/vehicle_command", q)
+        self.pub_dbg = self.create_publisher(String, "/x650/debug", 10)
         self.create_subscription(VehicleLocalPosition, "/fmu/out/vehicle_local_position_v1", self.on_pos, q)
         self.create_subscription(VehicleStatus, "/fmu/out/vehicle_status_v1", self.on_status, q)
         for topic in ("/fmu/out/vehicle_land_detected", "/fmu/out/vehicle_land_detected_v1"):
@@ -116,6 +119,7 @@ class MovingLanding(Node):
         self.settle_start = 0.0
         self.land_retry = 0
         self.last_rebuild = 0.0
+        self.last_acc = (0.0, 0.0, 0.0)
         self.land_err = float("nan")
 
         if HAS_GZ:
@@ -226,6 +230,33 @@ class MovingLanding(Node):
         self.pad_vel_ned = enu_to_ned(np.array([m.twist.linear.x, m.twist.linear.y, m.twist.linear.z]))
 
     # ---------- 发布 ----------
+    def publish_debug(self) -> None:
+        ref = getattr(self.predictor, "last_reference", None)
+        dbg = {
+            "t": self.now(),
+            "state": self.state,
+            "armed": bool(self.armed),
+            "nav_state": int(self.nav_state),
+            "horizon": float(getattr(self.predictor, "horizon_s", 0.0)),
+            "descent_rate": float(getattr(self.predictor, "descent_rate", 0.0)),
+            "true_horiz": None if self.true_horiz == float("inf") else float(self.true_horiz),
+            "true_above": None if self.true_above == float("inf") else float(self.true_above),
+            "acc": list(self.last_acc),
+            "ref_pos": None if ref is None else list(ref.position),
+            "ref_vel": None if ref is None else list(ref.velocity),
+            "pad_ned": None if self.pad_ned is None else [float(v) for v in self.pad_ned],
+            "pad_vel": [float(v) for v in self.pad_vel_ned],
+            "pos_ned": None if self.pos_ned is None else [float(v) for v in self.pos_ned],
+            # 直接给出世界 ENU 坐标，方便调试面板与船位姿画在同一坐标系
+            "pos_enu": None if self.pos_ned is None else [
+                float(self.origin_enu[0] + self.pos_ned[1]),
+                float(self.origin_enu[1] + self.pos_ned[0]),
+                float(self.origin_enu[2] - self.pos_ned[2])],
+        }
+        msg = String()
+        msg.data = json.dumps(dbg)
+        self.pub_dbg.publish(msg)
+
     def now(self) -> float:
         return self.get_clock().now().nanoseconds / 1e9 - self.t0
 
@@ -254,6 +285,7 @@ class MovingLanding(Node):
         self.pub_sp.publish(sp)
 
     def publish_accel(self, acc: np.ndarray) -> None:
+        self.last_acc = tuple(float(v) for v in acc)
         mode = OffboardControlMode()
         mode.acceleration = True
         mode.timestamp = int(self.get_clock().now().nanoseconds / 1000)
@@ -270,6 +302,10 @@ class MovingLanding(Node):
     def loop(self) -> None:
         """每个周期都无条件发布设定点（否则 PX4 会判 offboard 丢失 → RTL）。"""
         t = self.now()
+
+        if t - getattr(self, "_last_dbg", 0.0) > 0.1:
+            self._last_dbg = t
+            self.publish_debug()
 
         # 0) 已着陆上锁：彻底停机，不再发指令（否则会被重新解锁）
         if self.finished:

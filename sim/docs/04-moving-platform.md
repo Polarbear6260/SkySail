@@ -404,3 +404,25 @@ SHIP_FIXED=1 ./scripts/16_moving_landing_demo.sh    # 关闭随机
 
 > 与规划的差别仅剩：predictor 目前是"恒速+恒转向"基线，换成训练好的 MIONet 网络即可
 > （接口 `ReferencePredictor` 不变）。
+
+## 实时调试面板（GUI）
+
+```bash
+./scripts/16_moving_landing_demo.sh --dashboard      # demo 与面板一起跑
+# 或者单独开（demo 运行时）：
+python3 scripts/17_debug_dashboard.py
+```
+
+面板内容：
+
+| 区域 | 显示 |
+|---|---|
+| 左上·俯视图 | 落点板航迹（红）、无人机轨迹（蓝）、当前位置标记（世界 ENU，统一坐标系） |
+| 右上·误差曲线 | 真值水平误差、相对板面高度随时间 |
+| 右下·文本面板 | 状态机、armed / nav_state、预测视界、下降前馈、加速度指令、水平误差、板面高度、平台速度、参考速度 |
+
+数据来源：控制器新增的 `/x650/debug` 话题（JSON，10 Hz，含 `pos_enu` 已换算到世界系），
+以及 `/ship/pad_pose`、`/fmu/out/vehicle_local_position_v1`。
+
+实测截图见 `sim/results/2026-11-02-debug-dashboard.png`
+（水平误差 51 m → 0.57 m，高于板面 +0.03 m）。

@@ -8,6 +8,7 @@
 #   ./16_moving_landing_demo.sh                 # 带 GUI + 录制（默认）
 #   ./16_moving_landing_demo.sh --no-gui        # 无头（服务器上跑）
 #   ./16_moving_landing_demo.sh --no-record     # 只看不录
+#   ./16_moving_landing_demo.sh --dashboard     # 额外开实时调试面板
 #   ./16_moving_landing_demo.sh --ship-speed 1.0
 #
 # 环境变量（都有默认值）：
@@ -24,7 +25,7 @@ AGENT_BIN="${AGENT_BIN:-$HOME/tools/Micro-XRCE-DDS-Agent/build2/MicroXRCEAgent}"
 SKYSAIL="${SKYSAIL:-$HOME/planning_ws/src/SkySail}"
 WX650="${WX650:-$HOME/x650_ws}"
 
-GUI=1; RECORD=1; SHIP_SPEED=1.5; SHIP_START_X=-40; SHIP_DELAY=12; TIMEOUT=150
+GUI=1; RECORD=1; DASHBOARD=0; SHIP_SPEED=1.5; SHIP_START_X=-40; SHIP_DELAY=12; TIMEOUT=150
 DOCK_X=0; DOCK_Y=16; DOCK_Z=1.02          # 起飞台台面（与 world 中的 dock 一致）
 CRUISE_ALT=10
 
@@ -32,6 +33,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --no-gui) GUI=0 ;;
     --no-record) RECORD=0 ;;
+    --dashboard) DASHBOARD=1 ;;
     --ship-speed) SHIP_SPEED="$2"; shift ;;
     --ship-start-x) SHIP_START_X="$2"; shift ;;
     --timeout) TIMEOUT="$2"; shift ;;
@@ -126,6 +128,13 @@ setsid nohup python3 "$WS/scripts/10_move_platform.py" --world x650_sea --delay 
   --csv "$WS/logs/ship-$TS.csv" > "$WS/logs/ship-$TS.log" 2>&1 &
 sleep 3
 
+if [ "$DASHBOARD" = "1" ]; then
+  say "   起调试面板"
+  setsid nohup python3 "$WS/scripts/17_debug_dashboard.py" > "$WS/logs/dashboard-$TS.log" 2>&1 &
+  DASH_PID=$!
+  sleep 2
+fi
+
 say "== 7/7 起飞并追船（触板即停）=="
 timeout "$TIMEOUT" ros2 run x650_offboard moving_landing --ros-args \
   -p gz_world:=x650_sea \
@@ -141,6 +150,7 @@ PIDS=$(ps -eo pid,args | awk \
 for p in $(pgrep -x ruby 2>/dev/null); do
   tr '\0' ' ' < /proc/$p/cmdline 2>/dev/null | grep -q "gz sim" && kill -9 "$p"
 done
+[ -n "${DASH_PID:-}" ] && kill -9 $DASH_PID 2>/dev/null
 if [ -n "${REC_PID:-}" ]; then
   kill -TERM "$REC_PID" 2>/dev/null
   for i in $(seq 1 20); do kill -0 "$REC_PID" 2>/dev/null || break; sleep 1; done
