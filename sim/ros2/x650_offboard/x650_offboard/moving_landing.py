@@ -37,7 +37,7 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
 
 from geometry_msgs.msg import PoseStamped, TwistStamped
-from std_msgs.msg import String
+from std_msgs.msg import Float32, String
 from px4_msgs.msg import (OffboardControlMode, TrajectorySetpoint,
                           VehicleCommand, VehicleLandDetected,
                           VehicleLocalPosition, VehicleStatus)
@@ -72,6 +72,8 @@ class MovingLanding(Node):
         self.pub_sp = self.create_publisher(TrajectorySetpoint, "/fmu/in/trajectory_setpoint", q)
         self.pub_cmd = self.create_publisher(VehicleCommand, "/fmu/in/vehicle_command", q)
         self.pub_dbg = self.create_publisher(String, "/x650/debug", 10)
+        self.create_subscription(Float32, "/aruco/range", self.on_range, 10)
+        self.vision_range = None
         self.create_subscription(VehicleLocalPosition, "/fmu/out/vehicle_local_position_v1", self.on_pos, q)
         self.create_subscription(VehicleStatus, "/fmu/out/vehicle_status_v1", self.on_status, q)
         for topic in ("/fmu/out/vehicle_land_detected", "/fmu/out/vehicle_land_detected_v1"):
@@ -113,6 +115,7 @@ class MovingLanding(Node):
 
         self.pos_ned: np.ndarray | None = None
         self.pos_valid = False
+        self.sink_alt = None
         self.aligned = False
         self.vel_ned: np.ndarray | None = None
         self.pad_ned: np.ndarray | None = None
@@ -244,6 +247,9 @@ class MovingLanding(Node):
             self._pad_seen = self._pad_msgs
             yaw_enu = getattr(self, "_yaw_enu", None)
             self.history.push(self.now(), self.pad_ned, -(yaw_enu if yaw_enu is not None else 0.0))
+
+    def on_range(self, m: Float32) -> None:
+        self.vision_range = float(m.data)
 
     def on_land(self, m: VehicleLandDetected) -> None:
         self.landed = bool(m.landed)
@@ -415,7 +421,7 @@ class MovingLanding(Node):
                 f"src(fine={'Y' if self.pad_ned_fine is not None else 'N'},"
                 f"gps={'Y' if self.pad_ned_gps is not None else 'N'}) {detail} "
                 f"acc=({self.last_acc[0]:+.2f},{self.last_acc[1]:+.2f},{self.last_acc[2]:+.2f}) "
-                f"armed={self.armed}",
+                f"vrange={self.vision_range if self.vision_range is not None else -1:.2f} armed={self.armed}",
                 throttle_duration_sec=2.0)
 
         # 3) 起飞段：先爬到巡航高度
@@ -470,9 +476,27 @@ class MovingLanding(Node):
                 self.get_logger().info(f"降到板面上方 {alt - pad_alt:.2f} m（水平 {rel_h:.2f} m），精降")
             return
 
-        # 5) 下降：用 touchdown 阶段（位置/速度权重加倍，动作更果断）
-        #    参考速度 = 甲板速度 + 0.5 m/s 下降前馈，不靠误差慢慢“挤”下去
+        # 5) 下降：横向用视觉对准，纵向按固定下降率强制下沉
+        #    飞控的 z 估计会漂（实测差 2 m），所以不拿它当绝对高度用；
+        #    触地判定改用视觉给出的"相机到板距离"
         if self.state == "descend":
+            if not hasattr(self, "sink_alt") or self.sink_alt is None:
+                self.sink_alt = alt
+            floor_alt = -float(self.pad_ned[2]) - 0.05    # 板面高度（PX4 本体系）再往下 5 cm
+            if self.sink_alt > floor_alt:
+                self.sink_alt = max(floor_alt, self.sink_alt - 0.25 * 0.05)
+            self.publish_position(np.array([self.pad_ned[0], self.pad_ned[1], -self.sink_alt]))
+            if self.vision_range is not None and self.vision_range < 0.42:
+                self.state = "landed"
+                self.finished = True
+                self.send_cmd(CMD_ARM_DISARM, 0.0, 21196.0)
+                self.get_logger().info(
+                    f"视觉触地（相机到板 {self.vision_range:.2f} m，"
+                    f"真值水平 {self.true_horiz:.2f} m）→ 上锁")
+            return
+
+        # 5b) 旧加速度下降（保留备用）
+        if False:
             target = self.pad_ned + np.array([0.0, 0.0, 0.02])
             ref_vel = self.pad_vel_ned + np.array([0.0, 0.0, self.descent_rate])
             self._update_gains()

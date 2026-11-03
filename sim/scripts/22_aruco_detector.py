@@ -33,7 +33,7 @@ import numpy as np
 import rclpy
 from geometry_msgs.msg import PoseStamped, TwistStamped
 from rclpy.node import Node
-from std_msgs.msg import String
+from std_msgs.msg import Float32, String
 
 import gz.msgs10.boolean_pb2 as boolean_pb2
 import gz.msgs10.camera_info_pb2 as camera_info_pb2
@@ -83,6 +83,7 @@ class ArucoDetector(Node):
         self.pub_pose = self.create_publisher(PoseStamped, "/ship/pad_pose_vis", 10)
         self.pub_twist = self.create_publisher(TwistStamped, "/ship/pad_twist_vis", 10)
         self.pub_stats = self.create_publisher(String, "/aruco/stats", 10)
+        self.pub_range = self.create_publisher(Float32, "/aruco/range", 10)
 
         self.gz_node = gz_transport.Node()
         world = args.world
@@ -237,6 +238,10 @@ class ArucoDetector(Node):
         ts.header = ps.header
         ts.twist.linear.x, ts.twist.linear.y, ts.twist.linear.z = (float(v) for v in vel)
         self.pub_twist.publish(ts)
+
+        # 相机到板中心的距离：不依赖飞控的高度估计，用于触地判定
+        rng = float(np.linalg.norm(pad - p_c))
+        self.pub_range.publish(Float32(data=rng))
 
         st = String()
         st.data = json.dumps({
