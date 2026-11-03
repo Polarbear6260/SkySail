@@ -116,6 +116,7 @@ class MovingLanding(Node):
         self.pos_ned: np.ndarray | None = None
         self.pos_valid = False
         self.sink_alt = None
+        self.floor_since = 0.0
         self.aligned = False
         self.vel_ned: np.ndarray | None = None
         self.pad_ned: np.ndarray | None = None
@@ -486,7 +487,16 @@ class MovingLanding(Node):
             if self.sink_alt > floor_alt:
                 self.sink_alt = max(floor_alt, self.sink_alt - 0.25 * 0.05)
             self.publish_position(np.array([self.pad_ned[0], self.pad_ned[1], -self.sink_alt]))
-            if self.vision_range is not None and self.vision_range < 0.42:
+            # 到达下沉下限即认为已在甲板上（近距离标记占满画面，视觉无法再用）
+            at_floor = self.sink_alt <= floor_alt + 1e-3
+            if at_floor and self.floor_since == 0.0:
+                self.floor_since = t
+            elif not at_floor:
+                self.floor_since = 0.0
+            # 只有当视觉距离可信且确实很近时才允许上锁（防止板估计偏差导致提前上锁）
+            nearby = self.vision_range is not None and self.vision_range < 1.0
+            if (self.floor_since and t - self.floor_since > 0.5 and nearby) or \
+                    (self.vision_range is not None and self.vision_range < 0.42):
                 self.state = "landed"
                 self.finished = True
                 self.send_cmd(CMD_ARM_DISARM, 0.0, 21196.0)
