@@ -36,6 +36,7 @@ from rclpy.node import Node
 from std_msgs.msg import String
 
 import gz.msgs10.boolean_pb2 as boolean_pb2
+import gz.msgs10.camera_info_pb2 as camera_info_pb2
 import gz.msgs10.image_pb2 as image_pb2
 import gz.msgs10.pose_pb2 as pose_single_pb2
 import gz.msgs10.pose_v_pb2 as pose_v_pb2
@@ -89,10 +90,14 @@ class ArucoDetector(Node):
         self.pose_client = gz_transport.Node()
         self.gz_node.subscribe(pose_v_pb2.Pose_V, f"/world/{world}/pose/info", self.on_gz_pose)
         self.gz_node.subscribe(image_pb2.Image, args.image_topic, self.on_image)
+        self.intrinsics = None
+        info_topic = args.image_topic.replace("/image", "/camera_info")
+        self.gz_node.subscribe(camera_info_pb2.CameraInfo, info_topic, self.on_camera_info)
         # 自己把跟随相机贴到无人机上（省掉一个独立脚本，减少故障点）
         self.set_pose_pub = self.gz_node.advertise(f"/world/{world}/set_pose", pose_single_pb2.Pose)
         self.drone_pose = None
         self._last_follow = 0.0
+        self.recent: list[np.ndarray] = []
         self._last_detect = 0.0
 
         self.create_timer(2.0, self.report)
@@ -101,6 +106,18 @@ class ArucoDetector(Node):
         self.get_logger().info(f"ArUco 检测：{args.image_topic}")
 
     # ---------- 输入 ----------
+    def on_camera_info(self, msg) -> None:
+        """用相机自己发布的内参（比用 FOV 反推可靠得多）。"""
+        k = list(msg.intrinsic_matrix)
+        if len(k) >= 9:
+            self.intrinsics = np.array([[k[0], k[1], k[2]],
+                                        [k[3], k[4], k[5]],
+                                        [k[6], k[7], k[8]]], dtype=float)
+            if getattr(self, "_logged_intr", False) is False:
+                self._logged_intr = True
+                self.get_logger().info(
+                    f"相机内参: fx={self.intrinsics[0,0]:.1f} fy={self.intrinsics[1,1]:.1f} "
+                    f"cx={self.intrinsics[0,2]:.1f} cy={self.intrinsics[1,2]:.1f}")
     def on_gz_pose(self, msg) -> None:
         for p in msg.pose:
             if p.name == self.args.drone:
@@ -108,7 +125,7 @@ class ArucoDetector(Node):
                 # 相机安装在机体上：机体系偏移 (0,0,-0.05)，绕 y 转 +90° 朝下
                 R_body = quat_to_matrix((p.orientation.x, p.orientation.y,
                                          p.orientation.z, p.orientation.w))
-                cam_local = np.array([0.0, 0.0, -0.05])
+                cam_local = np.array([0.0, 0.0, 0.23])   # base_link 0.28 - 传感器 0.05
                 R_cam_local = np.array([[0.0, 0.0, 1.0],
                                         [0.0, 1.0, 0.0],
                                         [-1.0, 0.0, 0.0]])
@@ -157,10 +174,12 @@ class ArucoDetector(Node):
             return
         self.n_detect += 1
 
-        # 内参：由水平 FOV 推算（理想针孔）
         h, w = gray.shape
-        fx = (w / 2.0) / math.tan(self.args.hfov / 2.0)
-        K = np.array([[fx, 0, w / 2.0], [0, fx, h / 2.0], [0, 0, 1.0]], dtype=float)
+        if self.intrinsics is not None:
+            K = self.intrinsics
+        else:
+            fx = (w / 2.0) / math.tan(self.args.hfov / 2.0)
+            K = np.array([[fx, 0, w / 2.0], [0, fx, h / 2.0], [0, 0, 1.0]], dtype=float)
         half = MARKER_SIZE / 2.0
         obj = np.array([[-half, half, 0], [half, half, 0], [half, -half, 0], [-half, -half, 0]],
                        dtype=np.float32)
@@ -168,9 +187,16 @@ class ArucoDetector(Node):
         p_c, R_c = self.cam_pose
         world_pts = []
         for i, mid in enumerate(ids.ravel()):
+            # 远距离时标记只有几像素，检测结果不可靠 → 直接丢弃
+            quad = corners[i].reshape(4, 2)
+            side_px = float(np.mean([np.linalg.norm(quad[j] - quad[(j + 1) % 4]) for j in range(4)]))
+            if side_px < self.args.min_side_px:
+                continue
             ok, rvec, tvec = cv2.solvePnP(obj, corners[i].reshape(-1, 2), K, None,
                                           flags=cv2.SOLVEPNP_IPPE_SQUARE)
             if not ok:
+                continue
+            if float(np.linalg.norm(tvec)) > self.args.max_range:
                 continue
             R_m, _ = cv2.Rodrigues(rvec)
             # 标记中心在相机系
@@ -183,6 +209,12 @@ class ArucoDetector(Node):
         if not world_pts:
             return
         pad = np.mean(np.array(world_pts), axis=0)
+        # 时间中值滤波：抑制偶发误检
+        self.recent.append(pad)
+        if len(self.recent) > 3:
+            self.recent.pop(0)
+        if len(self.recent) >= 2:
+            pad = np.median(np.array(self.recent), axis=0)
 
         # 速度：差分（只保留最近 1 s）
         now = time.time()
@@ -215,6 +247,11 @@ class ArucoDetector(Node):
         self.pub_stats.publish(st)
 
     def report(self) -> None:
+        if self.cam_pose is not None:
+            p_c = self.cam_pose[0]
+            d = self.drone_pose
+            dpos = (f"({d.position.x:+.1f},{d.position.y:+.1f},{d.position.z:+.1f})" if d else "None")
+            self.get_logger().info(f"cam=({p_c[0]:+.1f},{p_c[1]:+.1f},{p_c[2]:+.1f}) drone={dpos}")
         if self.n_frames:
             self.get_logger().info(
                 f"ArUco: {self.n_frames} 帧, {self.n_detect} 帧检出 "
@@ -227,6 +264,8 @@ def main() -> int:
     ap.add_argument("--camrig", default="")      # 空=直接用机体位姿（相机装在机体上）
     ap.add_argument("--drone", default="x650_0")
     ap.add_argument("--follow", type=int, default=1)
+    ap.add_argument("--max-range", type=float, default=12.0)     # 超过此距离的检测丢弃
+    ap.add_argument("--min-side-px", type=float, default=18.0)   # 标记像素边长下限
     ap.add_argument("--hfov", type=float, default=1.4)
     ap.add_argument("--image-topic",
                     default="/world/x650_sea/model/x650_0/link/base_link/sensor/downcam/image")

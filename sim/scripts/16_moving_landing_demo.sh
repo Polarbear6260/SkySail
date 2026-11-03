@@ -25,7 +25,7 @@ AGENT_BIN="${AGENT_BIN:-$HOME/tools/Micro-XRCE-DDS-Agent/build2/MicroXRCEAgent}"
 SKYSAIL="${SKYSAIL:-$HOME/planning_ws/src/SkySail}"
 WX650="${WX650:-$HOME/x650_ws}"
 
-GUI=1; RECORD=1; DASHBOARD=0; PERCEPTION=""; PERCEPTION_SEED=""; GPS_COARSE=""; VISION=0; RENDER_ENGINE="${RENDER_ENGINE:-}" SHIP_SPEED=1.5; SHIP_START_X=-40; SHIP_DELAY=12; TIMEOUT=150
+GUI=1; RECORD=1; DASHBOARD=0; PERCEPTION=""; PERCEPTION_SEED=""; GPS_COARSE=""; VISION=0; RENDER_ENGINE="${RENDER_ENGINE:-}" SHIP_SPEED="${SHIP_SPEED:-1.5}"; SHIP_START_X="${SHIP_START_X:--40}"; SHIP_DELAY="${SHIP_DELAY:-12}"; TIMEOUT=150
 DOCK_X=0; DOCK_Y=16; DOCK_Z=1.02          # 起飞台台面（与 world 中的 dock 一致）
 CRUISE_ALT=10
 
@@ -62,7 +62,7 @@ say "   OK（PX4=$PX4_DIR）"
 
 say "== 1/7 清理残留 =="
 PIDS=$(ps -eo pid,args | awk -v me=$$ -v dad=$PPID \
-  '/10_move_platform|12_log_pose|18_perception|19_gps_source|21_camrig|22_aruco_detector|MicroXRCEAgent|bin\/px4|x650_offboard\/lib/ && !/awk/ && !/grep/ {print $1}' \
+  '/10_move_platform|12_log_pose|18_perception|19_gps_source|21_camrig|22_aruco_detector|23_vision_eval|MicroXRCEAgent|bin\/px4|x650_offboard\/lib/ && !/awk/ && !/grep/ {print $1}' \
   | grep -vxE "($$|$PPID)" || true)
 [ -n "$PIDS" ] && kill -9 $PIDS 2>/dev/null
 for p in $(pgrep -x ruby 2>/dev/null); do
@@ -164,6 +164,9 @@ if [ "$VISION" = "1" ]; then
   setsid nohup python3 "$WS/scripts/22_aruco_detector.py" --world x650_sea \
     > "$WS/logs/aruco-$TS.log" 2>&1 &
   ARUCO_PID=$!
+  setsid nohup python3 "$WS/scripts/23_vision_eval.py" --duration $((TIMEOUT + 20)) \
+    --csv "$WS/logs/vision_eval-$TS.csv" > "$WS/logs/viseval-$TS.log" 2>&1 &
+  VISEVAL_PID=$!
   PAD_POSE_TOPIC="/ship/pad_pose_vis"; PAD_TWIST_TOPIC="/ship/pad_twist_vis"
   sleep 2
 fi
@@ -201,7 +204,7 @@ timeout "$TIMEOUT" ros2 run x650_offboard moving_landing --ros-args \
 
 # —— 收尾：立刻停掉一切 ——
 PIDS=$(ps -eo pid,args | awk \
-  '/10_move_platform|12_log_pose|18_perception|19_gps_source|21_camrig|22_aruco_detector|MicroXRCEAgent|bin\/px4|x650_offboard\/lib/ && !/awk/ && !/grep/ {print $1}' \
+  '/10_move_platform|12_log_pose|18_perception|19_gps_source|21_camrig|22_aruco_detector|23_vision_eval|MicroXRCEAgent|bin\/px4|x650_offboard\/lib/ && !/awk/ && !/grep/ {print $1}' \
   | grep -vxE "($$|$PPID)" || true)
 [ -n "$PIDS" ] && kill -9 $PIDS 2>/dev/null
 for p in $(pgrep -x ruby 2>/dev/null); do
@@ -212,6 +215,7 @@ done
 [ -n "${GPS_PID:-}" ] && kill -9 $GPS_PID 2>/dev/null
 [ -n "${CAMRIG_PID:-}" ] && kill -9 $CAMRIG_PID 2>/dev/null
 [ -n "${ARUCO_PID:-}" ] && kill -9 $ARUCO_PID 2>/dev/null
+[ -n "${VISEVAL_PID:-}" ] && kill -9 $VISEVAL_PID 2>/dev/null
 if [ -n "${REC_PID:-}" ]; then
   kill -TERM "$REC_PID" 2>/dev/null
   for i in $(seq 1 20); do kill -0 "$REC_PID" 2>/dev/null || break; sleep 1; done
