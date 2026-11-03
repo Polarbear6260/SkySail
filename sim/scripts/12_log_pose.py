@@ -58,6 +58,11 @@ def main() -> int:
 
     t0 = time.time()
     rows = []
+    fh = open(args.csv, "w", newline="") if args.csv else None
+    if fh:
+        import csv as _csv
+        _w = _csv.writer(fh)
+        _w.writerow(["t", "dx", "dy", "dz", "px", "py", "pz", "horiz", "above"])
     last_print = 0.0
     print(f"记录 {args.drone} 相对落点板的真实位置（{args.duration:.0f} s）")
     try:
@@ -76,6 +81,12 @@ def main() -> int:
             horiz = math.hypot(dx - px, dy - py)
             above = dz - pz
             rows.append((t, dx, dy, dz, px, py, pz, horiz, above))
+            if fh:
+                _w.writerow([round(t, 3), round(dx, 3), round(dy, 3), round(dz, 3),
+                             round(px, 3), round(py, 3), round(pz, 3),
+                             round(horiz, 3), round(above, 3)])
+                if len(rows) % 20 == 0:
+                    fh.flush()
             if t - last_print >= 1.0:
                 last_print = t
                 print(f"  t={t:6.1f}s drone=({dx:+6.2f},{dy:+6.2f},{dz:6.2f}) "

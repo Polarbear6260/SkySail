@@ -232,9 +232,12 @@ class MovingLanding(Node):
             w = float(np.clip((rng - d) / (rng * 0.5), 0.0, 1.0))   # 近→1，远→0
             self.pad_ned = (1.0 - w) * gps + w * fine
         # 只在新测量到达时记录，避免用重复值污染速度估计（GPS 只有 1 Hz）
-        if getattr(self, "_yaw_enu", None) is not None and self._pad_msgs != self._pad_seen:
+        # 注意：yaw 可能缺失（只有 GPS 时没有姿态），此时用 0 兜底——
+        # 早期版本因为这里要求 yaw 存在，导致历史永远为空、预测器一直输出原点
+        if self._pad_msgs != self._pad_seen:
             self._pad_seen = self._pad_msgs
-            self.history.push(self.now(), self.pad_ned, -self._yaw_enu)
+            yaw_enu = getattr(self, "_yaw_enu", None)
+            self.history.push(self.now(), self.pad_ned, -(yaw_enu if yaw_enu is not None else 0.0))
 
     def on_land(self, m: VehicleLandDetected) -> None:
         self.landed = bool(m.landed)
@@ -382,9 +385,21 @@ class MovingLanding(Node):
                                  self.vel_ned[1] - self.pad_vel_ned[1]))
 
         if int(t * 2) % 4 == 0:
+            ref = getattr(self.predictor, "last_reference", None)
+            if ref is not None:
+                detail = (f"pos=({self.pos_ned[0]:+.1f},{self.pos_ned[1]:+.1f}) "
+                          f"pad=({self.pad_ned[0]:+.1f},{self.pad_ned[1]:+.1f}) "
+                          f"ref=({ref.position[0]:+.1f},{ref.position[1]:+.1f},{ref.position[2]:+.2f}) "
+                          f"rvz={ref.velocity[2]:+.2f}")
+            else:
+                detail = "ref=n/a"
             self.get_logger().info(
-                f"state={self.state} alt={alt:.2f} pad_alt={pad_alt:.2f} "
-                f"rel_h={rel_h:.2f} rel_v={rel_v:.2f} 真值(水平={self.true_horiz:.2f} 高于板面={self.true_above:+.2f}) armed={self.armed}",
+                f"state={self.state} alt={alt:.2f} rel_h={rel_h:.2f} "
+                f"真值(水平={self.true_horiz:.2f} 高于板面={self.true_above:+.2f}) "
+                f"src(fine={'Y' if self.pad_ned_fine is not None else 'N'},"
+                f"gps={'Y' if self.pad_ned_gps is not None else 'N'}) {detail} "
+                f"acc=({self.last_acc[0]:+.2f},{self.last_acc[1]:+.2f},{self.last_acc[2]:+.2f}) "
+                f"armed={self.armed}",
                 throttle_duration_sec=2.0)
 
         # 3) 起飞段：先爬到巡航高度
@@ -400,6 +415,7 @@ class MovingLanding(Node):
         # 3b) 转场：在巡航高度飞向落点板正上方
         if self.state == "transit":
             self.predictor.horizon_s = 0.8
+            self.predictor.z_offset = -self.cruise_alt        # 平台上空
             lead = self.pad_vel_ned * self.lead_time
             target = self.pad_ned + lead + np.array([0.0, 0.0, -self.cruise_alt])
             self._update_gains()
@@ -407,12 +423,14 @@ class MovingLanding(Node):
             self.publish_accel(acc)
             # 用“到提前量目标”的水平距离判定，而不是到板本身
             d_target = float(np.hypot(self.pos_ned[0] - target[0], self.pos_ned[1] - target[1]))
-            if d_target < 0.6:
+            if d_target < 0.6 and rel_h < 1.0:
                 if self.cruise_t == 0.0:
                     self.cruise_t = t
                     self.get_logger().info(
                         f"已到板上方 {alt:.1f} m（水平 {rel_h:.2f} m），保持 {self.cruise_hold_s:.0f} s")
-                if t - self.cruise_t >= self.cruise_hold_s:
+                if rel_h > 1.5:                      # 距离又变大，重新计时
+                    self.cruise_t = 0.0
+                elif t - self.cruise_t >= self.cruise_hold_s:
                     self.state = "approach"
                     self.get_logger().info(f"开始下降（自 {alt:.1f} m）")
             return
@@ -421,6 +439,7 @@ class MovingLanding(Node):
         if self.state == "approach":
             self.predictor.horizon_s = 0.3
             self.predictor.descent_rate = 0.0
+            self.predictor.z_offset = -self.clearance         # 板面上方
             target = self.pad_ned + np.array([0.0, 0.0, 0.02])
             self._update_gains()
             acc = self.ctrl.compute_control(self.pos_ned, self.vel_ned, self.history, "tracking")
@@ -457,6 +476,7 @@ class MovingLanding(Node):
             target = self.pad_ned + np.array([0.0, 0.0, -0.02])   # 板面之上 2 cm
             ref_vel = self.pad_vel_ned                              # 不再压下去
             self.predictor.descent_rate = 0.15
+            self.predictor.z_offset = -0.03
             self.predictor.horizon_s = 0.0
             self._update_gains()
             acc = self.ctrl.compute_control(self.pos_ned, self.vel_ned, self.history, "touchdown")

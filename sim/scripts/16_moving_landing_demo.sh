@@ -161,9 +161,6 @@ fi
 PAD_POSE_TOPIC="/ship/pad_pose"; PAD_TWIST_TOPIC="/ship/pad_twist"; GPS_TOPIC=""
 if [ "$VISION" = "1" ]; then
   say "   启用 ArUco 视觉（相机跟随 + 检测）"
-  setsid nohup python3 "$WS/scripts/21_camrig.py" --duration $((TIMEOUT + 30)) \
-    > "$WS/logs/camrig-$TS.log" 2>&1 &
-  CAMRIG_PID=$!
   setsid nohup python3 "$WS/scripts/22_aruco_detector.py" --world x650_sea \
     > "$WS/logs/aruco-$TS.log" 2>&1 &
   ARUCO_PID=$!

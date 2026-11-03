@@ -31,7 +31,7 @@ def main() -> int:
 
     node = gz_transport.Node()
     node.subscribe(pose_v_pb2.Pose_V, f"/world/{args.world}/pose/info", on_pose)
-    pub = node.advertise(f"/world/{args.world}/set_pose", pose_pb2.Pose)
+    svc = f"/world/{args.world}/set_pose"
 
     t0 = time.time(); nxt = t0
     print(f"跟随相机：{args.rig} ← {args.drone}")
@@ -49,7 +49,7 @@ def main() -> int:
         p.position.z = src.position.z - 0.10          # 略低于机体，避免被桨遮挡
         p.orientation.x, p.orientation.y = 0.0, 0.7071068   # 俯视：绕 y 转 +90°
         p.orientation.z, p.orientation.w = 0.0, 0.7071068
-        pub.publish(p)
+        node.request(svc, p, pose_pb2.Pose, bool_pb2.Boolean, 200)
     return 0
 
 

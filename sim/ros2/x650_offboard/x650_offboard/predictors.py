@@ -62,6 +62,8 @@ class ConstantTurnPredictor:
         self.preview_horizon = int(preview_horizon)
         # 下降前馈（NED 下 z 正=向下）：由控制器按阶段设置
         self.descent_rate = 0.0
+        # 参考点的垂直偏移（NED，正=向下）。阶段不同：巡航在平台上空、末端贴板
+        self.z_offset = 0.0
 
     def __call__(self, observation: PadHistory):
         # 延迟导入，避免在没有 SkySail 时也能 import 本模块
@@ -70,8 +72,11 @@ class ConstantTurnPredictor:
         if not observation.ready():
             pos = observation.positions[-1] if observation.positions else (0.0, 0.0, 0.0)
             # 预热阶段也必须给 preview，否则 LQR 的曲率前馈项会报错
-            return LandingReference(position=pos, velocity=(0.0, 0.0, 0.0),
-                                    curvature_preview=tuple([0.0] * self.preview_horizon))
+            ref = LandingReference(position=(pos[0], pos[1], pos[2] + self.z_offset),
+                                   velocity=(0.0, 0.0, 0.0),
+                                   curvature_preview=tuple([0.0] * self.preview_horizon))
+            self.last_reference = ref
+            return ref
 
         t = observation.times
         xs = [p[0] for p in observation.positions]
@@ -85,7 +90,8 @@ class ConstantTurnPredictor:
 
         h = self.horizon_s
         vz += self.descent_rate
-        pos = (xs[-1] + vx * h, ys[-1] + vy * h, zs[-1] + (vz + self.descent_rate) * h)
+        pos = (xs[-1] + vx * h, ys[-1] + vy * h,
+               zs[-1] + (vz + self.descent_rate) * h + self.z_offset)
         vel = (vx, vy, vz)
 
         speed = float(np.hypot(vx, vy))

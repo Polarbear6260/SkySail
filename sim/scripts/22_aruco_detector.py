@@ -35,7 +35,9 @@ from geometry_msgs.msg import PoseStamped, TwistStamped
 from rclpy.node import Node
 from std_msgs.msg import String
 
+import gz.msgs10.boolean_pb2 as boolean_pb2
 import gz.msgs10.image_pb2 as image_pb2
+import gz.msgs10.pose_pb2 as pose_single_pb2
 import gz.msgs10.pose_v_pb2 as pose_v_pb2
 import gz.transport13 as gz_transport
 
@@ -83,8 +85,15 @@ class ArucoDetector(Node):
 
         self.gz_node = gz_transport.Node()
         world = args.world
+        # 单独的 Node 负责服务请求：在订阅回调里用同一个 Node 发 request 会失效
+        self.pose_client = gz_transport.Node()
         self.gz_node.subscribe(pose_v_pb2.Pose_V, f"/world/{world}/pose/info", self.on_gz_pose)
         self.gz_node.subscribe(image_pb2.Image, args.image_topic, self.on_image)
+        # 自己把跟随相机贴到无人机上（省掉一个独立脚本，减少故障点）
+        self.set_pose_pub = self.gz_node.advertise(f"/world/{world}/set_pose", pose_single_pb2.Pose)
+        self.drone_pose = None
+        self._last_follow = 0.0
+        self._last_detect = 0.0
 
         self.create_timer(2.0, self.report)
         self.n_frames = 0
@@ -94,15 +103,47 @@ class ArucoDetector(Node):
     # ---------- 输入 ----------
     def on_gz_pose(self, msg) -> None:
         for p in msg.pose:
-            if p.name == self.args.camrig:
+            if p.name == self.args.drone:
+                self.drone_pose = p
+                # 相机安装在机体上：机体系偏移 (0,0,-0.05)，绕 y 转 +90° 朝下
+                R_body = quat_to_matrix((p.orientation.x, p.orientation.y,
+                                         p.orientation.z, p.orientation.w))
+                cam_local = np.array([0.0, 0.0, -0.05])
+                R_cam_local = np.array([[0.0, 0.0, 1.0],
+                                        [0.0, 1.0, 0.0],
+                                        [-1.0, 0.0, 0.0]])
+                self.cam_pose = (np.array([p.position.x, p.position.y, p.position.z])
+                                 + R_body @ cam_local, R_body @ R_cam_local)
+            elif self.args.camrig and p.name == self.args.camrig:
                 self.cam_pose = (
                     np.array([p.position.x, p.position.y, p.position.z]),
                     quat_to_matrix((p.orientation.x, p.orientation.y,
                                     p.orientation.z, p.orientation.w)),
                 )
 
+    def follow_drone(self) -> None:
+        if self.drone_pose is None or not self.args.follow:
+            return
+        now = time.time()
+        if now - self._last_follow < 0.05:      # 最多 20 Hz，避免把 set_pose 服务打满
+            return
+        self._last_follow = now
+        p = pose_single_pb2.Pose()
+        p.name = self.args.camrig
+        p.position.x = self.drone_pose.position.x
+        p.position.y = self.drone_pose.position.y
+        p.position.z = self.drone_pose.position.z - 0.10
+        p.orientation.y, p.orientation.w = 0.7071068, 0.7071068
+        self.pose_client.request(f"/world/{self.args.world}/set_pose", p,
+                                 pose_single_pb2.Pose, boolean_pb2.Boolean, 100)
+
     def on_image(self, msg) -> None:
         t0 = time.time()
+        self.follow_drone()
+        # 图像可能以数百 Hz 到达（update_rate 未必生效），检测限速到 30 Hz
+        if t0 - self._last_detect < 1.0 / 30.0:
+            return
+        self._last_detect = t0
         self.n_frames += 1
         if self.cam_pose is None:
             return
@@ -183,10 +224,12 @@ class ArucoDetector(Node):
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--world", default="x650_sea")
-    ap.add_argument("--camrig", default="camrig")
+    ap.add_argument("--camrig", default="")      # 空=直接用机体位姿（相机装在机体上）
+    ap.add_argument("--drone", default="x650_0")
+    ap.add_argument("--follow", type=int, default=1)
     ap.add_argument("--hfov", type=float, default=1.4)
     ap.add_argument("--image-topic",
-                    default="/world/x650_sea/model/camrig/link/link/sensor/downcam/image")
+                    default="/world/x650_sea/model/x650_0/link/base_link/sensor/downcam/image")
     args, _ = ap.parse_known_args()
 
     rclpy.init()
