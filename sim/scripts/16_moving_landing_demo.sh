@@ -25,7 +25,7 @@ AGENT_BIN="${AGENT_BIN:-$HOME/tools/Micro-XRCE-DDS-Agent/build2/MicroXRCEAgent}"
 SKYSAIL="${SKYSAIL:-$HOME/planning_ws/src/SkySail}"
 WX650="${WX650:-$HOME/x650_ws}"
 
-GUI=1; RECORD=1; DASHBOARD=0; PERCEPTION=""; PERCEPTION_SEED=""; GPS_COARSE="" SHIP_SPEED=1.5; SHIP_START_X=-40; SHIP_DELAY=12; TIMEOUT=150
+GUI=1; RECORD=1; DASHBOARD=0; PERCEPTION=""; PERCEPTION_SEED=""; GPS_COARSE=""; VISION=0; RENDER_ENGINE="${RENDER_ENGINE:-}" SHIP_SPEED=1.5; SHIP_START_X=-40; SHIP_DELAY=12; TIMEOUT=150
 DOCK_X=0; DOCK_Y=16; DOCK_Z=1.02          # 起飞台台面（与 world 中的 dock 一致）
 CRUISE_ALT=10
 
@@ -37,6 +37,7 @@ while [ $# -gt 0 ]; do
     --perception) PERCEPTION="$2"; shift ;;   # "延迟s,位置噪声m,丢帧概率"
     --perception-seed) PERCEPTION_SEED="$2"; shift ;;
     --gps-coarse) GPS_COARSE="$2"; shift ;;   # "噪声m,跳变概率"
+    --vision) VISION=1; RENDER_ENGINE="ogre" ;;  # 用 ArUco 视觉当精定位
     --ship-speed) SHIP_SPEED="$2"; shift ;;
     --ship-start-x) SHIP_START_X="$2"; shift ;;
     --timeout) TIMEOUT="$2"; shift ;;
@@ -61,7 +62,7 @@ say "   OK（PX4=$PX4_DIR）"
 
 say "== 1/7 清理残留 =="
 PIDS=$(ps -eo pid,args | awk -v me=$$ -v dad=$PPID \
-  '/10_move_platform|12_log_pose|18_perception|19_gps_source|MicroXRCEAgent|bin\/px4|x650_offboard\/lib/ && !/awk/ && !/grep/ {print $1}' \
+  '/10_move_platform|12_log_pose|18_perception|19_gps_source|21_camrig|22_aruco_detector|MicroXRCEAgent|bin\/px4|x650_offboard\/lib/ && !/awk/ && !/grep/ {print $1}' \
   | grep -vxE "($$|$PPID)" || true)
 [ -n "$PIDS" ] && kill -9 $PIDS 2>/dev/null
 for p in $(pgrep -x ruby 2>/dev/null); do
@@ -78,7 +79,7 @@ pgrep -x MicroXRCEAgent >/dev/null || { echo "agent 启动失败" >&2; exit 1; }
 say "== 3/7 启动 SITL（飞机在 dock 上，$DOCK_X,$DOCK_Y,$DOCK_Z）=="
 cp "$WS/gz_extras/worlds/x650_sea.sdf" "$PX4_DIR/Tools/simulation/gz/worlds/" 2>/dev/null
 cp "$WS/gz_extras/airframes/22000_gz_x650" "$PX4_DIR/ROMFS/px4fmu_common/init.d-posix/airframes/" 2>/dev/null
-( cd "$PX4_DIR" && HEADLESS=1 PX4_GZ_WORLD=x650_sea \
+( cd "$PX4_DIR" && HEADLESS=1 PX4_GZ_WORLD=x650_sea PX4_GZ_SIM_RENDER_ENGINE="$RENDER_ENGINE" \
     PX4_GZ_MODEL_POSE="$DOCK_X,$DOCK_Y,$DOCK_Z,0,0,0" \
     setsid nohup timeout $((TIMEOUT + 120)) make px4_sitl gz_x650 \
     > "$WS/logs/sitl-$TS.log" 2>&1 < <(sleep $((TIMEOUT + 120))) & )
@@ -158,6 +159,17 @@ if [ "$DASHBOARD" = "1" ]; then
 fi
 
 PAD_POSE_TOPIC="/ship/pad_pose"; PAD_TWIST_TOPIC="/ship/pad_twist"; GPS_TOPIC=""
+if [ "$VISION" = "1" ]; then
+  say "   启用 ArUco 视觉（相机跟随 + 检测）"
+  setsid nohup python3 "$WS/scripts/21_camrig.py" --duration $((TIMEOUT + 30)) \
+    > "$WS/logs/camrig-$TS.log" 2>&1 &
+  CAMRIG_PID=$!
+  setsid nohup python3 "$WS/scripts/22_aruco_detector.py" --world x650_sea \
+    > "$WS/logs/aruco-$TS.log" 2>&1 &
+  ARUCO_PID=$!
+  PAD_POSE_TOPIC="/ship/pad_pose_vis"; PAD_TWIST_TOPIC="/ship/pad_twist_vis"
+  sleep 2
+fi
 if [ -n "$GPS_COARSE" ]; then
   IFS=',' read -r G_NOISE G_JUMP G_RATE <<< "$GPS_COARSE"
   say "   GPS 级粗定位：σ=${G_NOISE:-1.5}m 跳变 ${G_JUMP:-0.02}"
@@ -188,11 +200,11 @@ timeout "$TIMEOUT" ros2 run x650_offboard moving_landing --ros-args \
   -p skysail_path:="$SKYSAIL" \
   -p pad_pose_topic:="$PAD_POSE_TOPIC" \
   -p pad_twist_topic:="$PAD_TWIST_TOPIC" \
-  -p gps_pose_topic:="$GPS_TOPIC" > "$LOG" 2>&1
+  ${GPS_TOPIC:+-p gps_pose_topic:="$GPS_TOPIC"} > "$LOG" 2>&1
 
 # —— 收尾：立刻停掉一切 ——
 PIDS=$(ps -eo pid,args | awk \
-  '/10_move_platform|12_log_pose|18_perception|19_gps_source|MicroXRCEAgent|bin\/px4|x650_offboard\/lib/ && !/awk/ && !/grep/ {print $1}' \
+  '/10_move_platform|12_log_pose|18_perception|19_gps_source|21_camrig|22_aruco_detector|MicroXRCEAgent|bin\/px4|x650_offboard\/lib/ && !/awk/ && !/grep/ {print $1}' \
   | grep -vxE "($$|$PPID)" || true)
 [ -n "$PIDS" ] && kill -9 $PIDS 2>/dev/null
 for p in $(pgrep -x ruby 2>/dev/null); do
@@ -201,6 +213,8 @@ done
 [ -n "${DASH_PID:-}" ] && kill -9 $DASH_PID 2>/dev/null
 [ -n "${PERC_PID:-}" ] && kill -9 $PERC_PID 2>/dev/null
 [ -n "${GPS_PID:-}" ] && kill -9 $GPS_PID 2>/dev/null
+[ -n "${CAMRIG_PID:-}" ] && kill -9 $CAMRIG_PID 2>/dev/null
+[ -n "${ARUCO_PID:-}" ] && kill -9 $ARUCO_PID 2>/dev/null
 if [ -n "${REC_PID:-}" ]; then
   kill -TERM "$REC_PID" 2>/dev/null
   for i in $(seq 1 20); do kill -0 "$REC_PID" 2>/dev/null || break; sleep 1; done

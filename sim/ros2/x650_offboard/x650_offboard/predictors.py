@@ -69,7 +69,9 @@ class ConstantTurnPredictor:
 
         if not observation.ready():
             pos = observation.positions[-1] if observation.positions else (0.0, 0.0, 0.0)
-            return LandingReference(position=pos, velocity=(0.0, 0.0, 0.0))
+            # 预热阶段也必须给 preview，否则 LQR 的曲率前馈项会报错
+            return LandingReference(position=pos, velocity=(0.0, 0.0, 0.0),
+                                    curvature_preview=tuple([0.0] * self.preview_horizon))
 
         t = observation.times
         xs = [p[0] for p in observation.positions]

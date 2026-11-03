@@ -155,6 +155,184 @@
         <visual name="winch"><pose>-1.25 0 1.05 0 0 0</pose><geometry><cylinder><radius>0.06</radius><length>0.12</length></cylinder></geometry><material><diffuse>0.3 0.3 0.35 1</diffuse></material></visual>
 
         <!-- 着陆板：红色圆盘 + 白色外圈，抬高 2 cm 明显可见 -->
+        <!-- ARUCO_BEGIN（由 scripts/20_make_aruco_sdf.py 生成） -->
+        <visual name="aruco0_plate">
+          <pose>0.1500 -0.1500 0.4820 0 0 0</pose>
+          <geometry><plane><normal>0 0 1</normal><size>0.2200 0.2200</size></plane></geometry>
+          <material><ambient>0.05 0.05 0.05 1</ambient><diffuse>0.05 0.05 0.05 1</diffuse></material>
+        </visual>
+        <visual name="aruco0_w00">
+          <pose>0.0950 -0.0950 0.4826 0 0 0</pose>
+          <geometry><plane><normal>0 0 1</normal><size>0.0367 0.0367</size></plane></geometry>
+          <material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse></material>
+        </visual>
+        <visual name="aruco0_w02">
+          <pose>0.1683 -0.0950 0.4826 0 0 0</pose>
+          <geometry><plane><normal>0 0 1</normal><size>0.0367 0.0367</size></plane></geometry>
+          <material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse></material>
+        </visual>
+        <visual name="aruco0_w03">
+          <pose>0.2050 -0.0950 0.4826 0 0 0</pose>
+          <geometry><plane><normal>0 0 1</normal><size>0.0367 0.0367</size></plane></geometry>
+          <material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse></material>
+        </visual>
+        <visual name="aruco0_w11">
+          <pose>0.1317 -0.1317 0.4826 0 0 0</pose>
+          <geometry><plane><normal>0 0 1</normal><size>0.0367 0.0367</size></plane></geometry>
+          <material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse></material>
+        </visual>
+        <visual name="aruco0_w13">
+          <pose>0.2050 -0.1317 0.4826 0 0 0</pose>
+          <geometry><plane><normal>0 0 1</normal><size>0.0367 0.0367</size></plane></geometry>
+          <material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse></material>
+        </visual>
+        <visual name="aruco0_w22">
+          <pose>0.1683 -0.1683 0.4826 0 0 0</pose>
+          <geometry><plane><normal>0 0 1</normal><size>0.0367 0.0367</size></plane></geometry>
+          <material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse></material>
+        </visual>
+        <visual name="aruco0_w23">
+          <pose>0.2050 -0.1683 0.4826 0 0 0</pose>
+          <geometry><plane><normal>0 0 1</normal><size>0.0367 0.0367</size></plane></geometry>
+          <material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse></material>
+        </visual>
+        <visual name="aruco0_w32">
+          <pose>0.1683 -0.2050 0.4826 0 0 0</pose>
+          <geometry><plane><normal>0 0 1</normal><size>0.0367 0.0367</size></plane></geometry>
+          <material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse></material>
+        </visual>
+        <visual name="aruco1_plate">
+          <pose>0.4500 -0.1500 0.4820 0 0 0</pose>
+          <geometry><plane><normal>0 0 1</normal><size>0.2200 0.2200</size></plane></geometry>
+          <material><ambient>0.05 0.05 0.05 1</ambient><diffuse>0.05 0.05 0.05 1</diffuse></material>
+        </visual>
+        <visual name="aruco1_w10">
+          <pose>0.3950 -0.1317 0.4826 0 0 0</pose>
+          <geometry><plane><normal>0 0 1</normal><size>0.0367 0.0367</size></plane></geometry>
+          <material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse></material>
+        </visual>
+        <visual name="aruco1_w11">
+          <pose>0.4317 -0.1317 0.4826 0 0 0</pose>
+          <geometry><plane><normal>0 0 1</normal><size>0.0367 0.0367</size></plane></geometry>
+          <material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse></material>
+        </visual>
+        <visual name="aruco1_w12">
+          <pose>0.4683 -0.1317 0.4826 0 0 0</pose>
+          <geometry><plane><normal>0 0 1</normal><size>0.0367 0.0367</size></plane></geometry>
+          <material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse></material>
+        </visual>
+        <visual name="aruco1_w13">
+          <pose>0.5050 -0.1317 0.4826 0 0 0</pose>
+          <geometry><plane><normal>0 0 1</normal><size>0.0367 0.0367</size></plane></geometry>
+          <material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse></material>
+        </visual>
+        <visual name="aruco1_w20">
+          <pose>0.3950 -0.1683 0.4826 0 0 0</pose>
+          <geometry><plane><normal>0 0 1</normal><size>0.0367 0.0367</size></plane></geometry>
+          <material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse></material>
+        </visual>
+        <visual name="aruco1_w23">
+          <pose>0.5050 -0.1683 0.4826 0 0 0</pose>
+          <geometry><plane><normal>0 0 1</normal><size>0.0367 0.0367</size></plane></geometry>
+          <material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse></material>
+        </visual>
+        <visual name="aruco1_w30">
+          <pose>0.3950 -0.2050 0.4826 0 0 0</pose>
+          <geometry><plane><normal>0 0 1</normal><size>0.0367 0.0367</size></plane></geometry>
+          <material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse></material>
+        </visual>
+        <visual name="aruco1_w32">
+          <pose>0.4683 -0.2050 0.4826 0 0 0</pose>
+          <geometry><plane><normal>0 0 1</normal><size>0.0367 0.0367</size></plane></geometry>
+          <material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse></material>
+        </visual>
+        <visual name="aruco2_plate">
+          <pose>0.1500 0.1500 0.4820 0 0 0</pose>
+          <geometry><plane><normal>0 0 1</normal><size>0.2200 0.2200</size></plane></geometry>
+          <material><ambient>0.05 0.05 0.05 1</ambient><diffuse>0.05 0.05 0.05 1</diffuse></material>
+        </visual>
+        <visual name="aruco2_w02">
+          <pose>0.1683 0.2050 0.4826 0 0 0</pose>
+          <geometry><plane><normal>0 0 1</normal><size>0.0367 0.0367</size></plane></geometry>
+          <material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse></material>
+        </visual>
+        <visual name="aruco2_w03">
+          <pose>0.2050 0.2050 0.4826 0 0 0</pose>
+          <geometry><plane><normal>0 0 1</normal><size>0.0367 0.0367</size></plane></geometry>
+          <material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse></material>
+        </visual>
+        <visual name="aruco2_w12">
+          <pose>0.1683 0.1683 0.4826 0 0 0</pose>
+          <geometry><plane><normal>0 0 1</normal><size>0.0367 0.0367</size></plane></geometry>
+          <material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse></material>
+        </visual>
+        <visual name="aruco2_w13">
+          <pose>0.2050 0.1683 0.4826 0 0 0</pose>
+          <geometry><plane><normal>0 0 1</normal><size>0.0367 0.0367</size></plane></geometry>
+          <material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse></material>
+        </visual>
+        <visual name="aruco2_w22">
+          <pose>0.1683 0.1317 0.4826 0 0 0</pose>
+          <geometry><plane><normal>0 0 1</normal><size>0.0367 0.0367</size></plane></geometry>
+          <material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse></material>
+        </visual>
+        <visual name="aruco2_w30">
+          <pose>0.0950 0.0950 0.4826 0 0 0</pose>
+          <geometry><plane><normal>0 0 1</normal><size>0.0367 0.0367</size></plane></geometry>
+          <material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse></material>
+        </visual>
+        <visual name="aruco2_w31">
+          <pose>0.1317 0.0950 0.4826 0 0 0</pose>
+          <geometry><plane><normal>0 0 1</normal><size>0.0367 0.0367</size></plane></geometry>
+          <material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse></material>
+        </visual>
+        <visual name="aruco2_w33">
+          <pose>0.2050 0.0950 0.4826 0 0 0</pose>
+          <geometry><plane><normal>0 0 1</normal><size>0.0367 0.0367</size></plane></geometry>
+          <material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse></material>
+        </visual>
+        <visual name="aruco3_plate">
+          <pose>0.4500 0.1500 0.4820 0 0 0</pose>
+          <geometry><plane><normal>0 0 1</normal><size>0.2200 0.2200</size></plane></geometry>
+          <material><ambient>0.05 0.05 0.05 1</ambient><diffuse>0.05 0.05 0.05 1</diffuse></material>
+        </visual>
+        <visual name="aruco3_w00">
+          <pose>0.3950 0.2050 0.4826 0 0 0</pose>
+          <geometry><plane><normal>0 0 1</normal><size>0.0367 0.0367</size></plane></geometry>
+          <material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse></material>
+        </visual>
+        <visual name="aruco3_w03">
+          <pose>0.5050 0.2050 0.4826 0 0 0</pose>
+          <geometry><plane><normal>0 0 1</normal><size>0.0367 0.0367</size></plane></geometry>
+          <material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse></material>
+        </visual>
+        <visual name="aruco3_w10">
+          <pose>0.3950 0.1683 0.4826 0 0 0</pose>
+          <geometry><plane><normal>0 0 1</normal><size>0.0367 0.0367</size></plane></geometry>
+          <material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse></material>
+        </visual>
+        <visual name="aruco3_w13">
+          <pose>0.5050 0.1683 0.4826 0 0 0</pose>
+          <geometry><plane><normal>0 0 1</normal><size>0.0367 0.0367</size></plane></geometry>
+          <material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse></material>
+        </visual>
+        <visual name="aruco3_w21">
+          <pose>0.4317 0.1317 0.4826 0 0 0</pose>
+          <geometry><plane><normal>0 0 1</normal><size>0.0367 0.0367</size></plane></geometry>
+          <material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse></material>
+        </visual>
+        <visual name="aruco3_w31">
+          <pose>0.4317 0.0950 0.4826 0 0 0</pose>
+          <geometry><plane><normal>0 0 1</normal><size>0.0367 0.0367</size></plane></geometry>
+          <material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse></material>
+        </visual>
+        <visual name="aruco3_w32">
+          <pose>0.4683 0.0950 0.4826 0 0 0</pose>
+          <geometry><plane><normal>0 0 1</normal><size>0.0367 0.0367</size></plane></geometry>
+          <material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse></material>
+        </visual>
+        <!-- ARUCO_END -->
+
         <visual name="pad_visual">
           <pose>0.3 0 0.465 0 0 0</pose>
           <geometry><cylinder><radius>0.50</radius><length>0.03</length></cylinder></geometry>
@@ -165,11 +343,50 @@
           <geometry><cylinder><radius>0.56</radius><length>0.02</length></cylinder></geometry>
           <material><ambient>0.95 0.95 0.95 1</ambient><diffuse>1 1 1 1</diffuse></material>
         </visual>
+
+        <!-- 船载相机：朝船尾看落点板，用于内录（不依赖 GUI 抓屏） -->
+        <sensor name="deck_cam" type="camera">
+          <pose>1.55 0 1.35 0 0.25 3.14159</pose>
+          <update_rate>20</update_rate>
+          <camera>
+            <horizontal_fov>1.2</horizontal_fov>
+            <image><width>960</width><height>540</height><format>R8G8B8</format></image>
+            <clip><near>0.1</near><far>60</far></clip>
+          </camera>
+          <always_on>1</always_on>
+          <visualize>0</visualize>
+          <plugin filename="gz-sim-camera-video-recorder-system"
+                  name="gz::sim::systems::CameraVideoRecorder">
+            <record_path>/tmp/x650_deck_cam</record_path>
+            <format>mp4</format>
+            <bitrate>4M</bitrate>
+          </plugin>
+        </sensor>
         <collision name="pad_collision">
           <pose>0.3 0 0.20 0 0 0</pose>
           <geometry><cylinder><radius>0.56</radius><length>0.50</length></cylinder></geometry>
           <surface><friction><ode><mu>4.0</mu><mu2>4.0</mu2></ode></friction></surface>
         </collision>
+      </link>
+    </model>
+
+
+    <!-- 跟随相机：由 scripts/21_camrig.py 每 50 ms 设成无人机位姿，俯视下方 -->
+    <model name="camrig">
+      <static>true</static>
+      <pose>0 0 5 0 1.5708 0</pose>
+      <link name="link">
+        <sensor name="downcam" type="camera">
+          <pose>0 0 0 0 0 0</pose>
+          <update_rate>30</update_rate>
+          <camera>
+            <horizontal_fov>1.4</horizontal_fov>
+            <image><width>1280</width><height>960</height><format>R8G8B8</format></image>
+            <clip><near>0.05</near><far>60</far></clip>
+          </camera>
+          <always_on>1</always_on>
+          <visualize>0</visualize>
+        </sensor>
       </link>
     </model>
 
