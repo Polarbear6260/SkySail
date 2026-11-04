@@ -422,7 +422,7 @@ class MovingLanding(Node):
                 f"src(fine={'Y' if self.pad_ned_fine is not None else 'N'},"
                 f"gps={'Y' if self.pad_ned_gps is not None else 'N'}) {detail} "
                 f"acc=({self.last_acc[0]:+.2f},{self.last_acc[1]:+.2f},{self.last_acc[2]:+.2f}) "
-                f"vrange={self.vision_range if self.vision_range is not None else -1:.2f} armed={self.armed}",
+                f"landed={self.landed} vrange={self.vision_range if self.vision_range is not None else -1:.2f} armed={self.armed}",
                 throttle_duration_sec=2.0)
 
         # 3) 起飞段：先爬到巡航高度
@@ -480,7 +480,7 @@ class MovingLanding(Node):
         # 5) 下降：横向用视觉对准，纵向按固定下降率强制下沉
         #    飞控的 z 估计会漂（实测差 2 m），所以不拿它当绝对高度用；
         #    触地判定改用视觉给出的"相机到板距离"
-        if self.state == "descend":
+        if False and self.state == "descend":
             if not hasattr(self, "sink_alt") or self.sink_alt is None:
                 self.sink_alt = alt
             floor_alt = -float(self.pad_ned[2]) - 0.05    # 板面高度（PX4 本体系）再往下 5 cm
@@ -505,8 +505,8 @@ class MovingLanding(Node):
                     f"真值水平 {self.true_horiz:.2f} m）→ 上锁")
             return
 
-        # 5b) 旧加速度下降（保留备用）
-        if False:
+        # 5) 下降：加速度控制（回到验证过的版本）
+        if self.state == "descend":
             target = self.pad_ned + np.array([0.0, 0.0, 0.02])
             ref_vel = self.pad_vel_ned + np.array([0.0, 0.0, self.descent_rate])
             self._update_gains()

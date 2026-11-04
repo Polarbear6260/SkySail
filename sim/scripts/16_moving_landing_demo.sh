@@ -141,6 +141,8 @@ fi
 say "== 6/7 起船 + 真值日志 =="
 set +u; source /opt/ros/jazzy/setup.bash; source "$WX650/install/setup.bash"; set -u
 export PYTHONPATH="/usr/lib/python3/dist-packages:${PYTHONPATH:-}"
+setsid nohup python3 "$WS/scripts/25_z_drift_check.py" --duration $((TIMEOUT + 10)) \
+  --csv "$WS/logs/z_drift-$TS.csv" > "$WS/logs/zdrift-$TS.log" 2>&1 &
 setsid nohup python3 "$WS/scripts/12_log_pose.py" --world x650_sea --duration $((TIMEOUT + 20)) \
   --csv "$WS/logs/pose-$TS.csv" > "$WS/logs/pose-$TS.log" 2>&1 &
 SHIP_ARGS=()
