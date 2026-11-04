@@ -38,6 +38,7 @@ cd sim
 | [`sim/docs/03-reproduce.md`](sim/docs/03-reproduce.md) | 从零复现指南（含一键 demo） |
 | [`sim/docs/04-moving-platform.md`](sim/docs/04-moving-platform.md) | 移动平台着陆全过程与已知限制 |
 | [`sim/docs/05-architecture.md`](sim/docs/05-architecture.md) | 程序结构图（Mermaid） |
+| [`sim/docs/06-algorithm-delta.md`](sim/docs/06-algorithm-delta.md) | **原始算法 vs 当前实现的逐项差异** |
 | [`sim/ros2/README.md`](sim/ros2/README.md) | ROS 2 + uXRCE-DDS 控制链路 |
 | [`UAV_Control/README.md`](UAV_Control/README.md) | **控制库 API 细节**（`PointLandingController` / `MIONetLandingController`） |
 

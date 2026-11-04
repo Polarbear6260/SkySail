@@ -90,8 +90,8 @@ class ConstantTurnPredictor:
 
         h = self.horizon_s
         vz += self.descent_rate
-        pos = (xs[-1] + vx * h, ys[-1] + vy * h,
-               zs[-1] + (vz + self.descent_rate) * h + self.z_offset)
+        # 注意：vz 里已经加过 descent_rate，这里不能再加一次（此前是重复计入）
+        pos = (xs[-1] + vx * h, ys[-1] + vy * h, zs[-1] + vz * h + self.z_offset)
         vel = (vx, vy, vz)
 
         speed = float(np.hypot(vx, vy))
