@@ -37,7 +37,7 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
 
 from geometry_msgs.msg import PoseStamped, TwistStamped
-from std_msgs.msg import Float32, String
+from std_msgs.msg import String
 from px4_msgs.msg import (OffboardControlMode, TrajectorySetpoint,
                           VehicleCommand, VehicleLandDetected,
                           VehicleLocalPosition, VehicleStatus)
@@ -72,8 +72,6 @@ class MovingLanding(Node):
         self.pub_sp = self.create_publisher(TrajectorySetpoint, "/fmu/in/trajectory_setpoint", q)
         self.pub_cmd = self.create_publisher(VehicleCommand, "/fmu/in/vehicle_command", q)
         self.pub_dbg = self.create_publisher(String, "/x650/debug", 10)
-        self.create_subscription(Float32, "/aruco/range", self.on_range, 10)
-        self.vision_range = None
         self.create_subscription(VehicleLocalPosition, "/fmu/out/vehicle_local_position_v1", self.on_pos, q)
         self.create_subscription(VehicleStatus, "/fmu/out/vehicle_status_v1", self.on_status, q)
         for topic in ("/fmu/out/vehicle_land_detected", "/fmu/out/vehicle_land_detected_v1"):
@@ -93,7 +91,7 @@ class MovingLanding(Node):
         self.declare_parameter("origin_enu", "0,16,1.02")   # 起飞点世界坐标 = PX4 本地原点
         self.declare_parameter("cruise_alt", 10.0)        # 巡航高度（相对落点板）
         self.declare_parameter("local_z_offset", 0.0)   # PX4 本地原点=GPS 世界原点，无需偏移   # 出生点世界高度 = EKF 原点
-        self.declare_parameter("cruise_hold_s", 1.5)   # 巡航高度保持多久再下降
+        self.declare_parameter("cruise_hold_s", 3.0)   # 巡航高度保持多久再下降
         self.declare_parameter("lead_time", 0.5)         # 转场时朝船的“未来位置”飞
         self.declare_parameter("vel_gate", 0.40)        # 横向相对速度门限，满足才下降
         self.declare_parameter("descent_rate", 0.45)   # 落地下降率 m/s（果断）
@@ -114,10 +112,6 @@ class MovingLanding(Node):
         self.ctrl = self._build_controller()
 
         self.pos_ned: np.ndarray | None = None
-        self.pos_valid = False
-        self.sink_alt = None
-        self.floor_since = 0.0
-        self.aligned = False
         self.vel_ned: np.ndarray | None = None
         self.pad_ned: np.ndarray | None = None
         self.pad_ned_fine: np.ndarray | None = None
@@ -212,7 +206,6 @@ class MovingLanding(Node):
     # ---------- 订阅 ----------
     def on_pos(self, m: VehicleLocalPosition) -> None:
         self.pos_ned = np.array([m.x, m.y, m.z])
-        self.pos_valid = bool(m.xy_valid and m.z_valid)
         self.vel_ned = np.array([m.vx, m.vy, m.vz])
 
     def on_status(self, m: VehicleStatus) -> None:
@@ -227,9 +220,6 @@ class MovingLanding(Node):
     def _blend_pad(self) -> None:
         """按距离在"GPS 粗定位"和"精定位"之间平滑加权，避免交接跳变。"""
         fine, gps = self.pad_ned_fine, self.pad_ned_gps
-        # 视觉更新可能断续：超过 0.4 s 没更新就当作不可用，避免追一个"冻结"的目标
-        if fine is not None and (self.now() - getattr(self, "_fine_t", 0.0)) > 0.4:
-            fine = None
         if fine is None and gps is None:
             return
         if fine is None:
@@ -242,15 +232,9 @@ class MovingLanding(Node):
             w = float(np.clip((rng - d) / (rng * 0.5), 0.0, 1.0))   # 近→1，远→0
             self.pad_ned = (1.0 - w) * gps + w * fine
         # 只在新测量到达时记录，避免用重复值污染速度估计（GPS 只有 1 Hz）
-        # 注意：yaw 可能缺失（只有 GPS 时没有姿态），此时用 0 兜底——
-        # 早期版本因为这里要求 yaw 存在，导致历史永远为空、预测器一直输出原点
-        if self._pad_msgs != self._pad_seen:
+        if getattr(self, "_yaw_enu", None) is not None and self._pad_msgs != self._pad_seen:
             self._pad_seen = self._pad_msgs
-            yaw_enu = getattr(self, "_yaw_enu", None)
-            self.history.push(self.now(), self.pad_ned, -(yaw_enu if yaw_enu is not None else 0.0))
-
-    def on_range(self, m: Float32) -> None:
-        self.vision_range = float(m.data)
+            self.history.push(self.now(), self.pad_ned, -self._yaw_enu)
 
     def on_land(self, m: VehicleLandDetected) -> None:
         self.landed = bool(m.landed)
@@ -258,12 +242,7 @@ class MovingLanding(Node):
     def on_pad_pose(self, m: PoseStamped) -> None:
         # 世界 ENU − 起飞点（PX4 本地原点）→ NED，得到 PX4 本地系坐标
         world_enu = np.array([m.pose.position.x, m.pose.position.y, m.pose.position.z])
-        new_fine = enu_to_ned(world_enu - self.origin_enu)
-        if self.pad_ned_fine is None:
-            self.pad_ned_fine = new_fine
-        else:
-            self.pad_ned_fine = 0.6 * new_fine + 0.4 * self.pad_ned_fine   # EMA，抑制抖动
-        self._fine_t = self.now()
+        self.pad_ned_fine = enu_to_ned(world_enu - self.origin_enu)
         self._pad_msgs += 1
         self._yaw_enu = math.atan2(2.0 * (m.pose.orientation.w * m.pose.orientation.z
                                          + m.pose.orientation.x * m.pose.orientation.y),
@@ -375,11 +354,6 @@ class MovingLanding(Node):
         # 1) 未解锁：发位置设定点并请求解锁
         if not self.armed:
             self.publish_position(np.array([0.0, 0.0, -self.alt]))
-            # EKF 未就绪时不要解锁：否则位置估计是垃圾（曾出现 alt=-500 m）
-            if not self.pos_valid:
-                if int(t) % 5 == 0:
-                    self.get_logger().info("等待 EKF 位置有效（xy_valid && z_valid）…")
-                return
             if t > 1.5 and (self.arm_sent == 0.0 or t - self.arm_sent > 5.0):
                 self.arm_sent = t
                 self.send_cmd(CMD_ARM_DISARM, 1.0, 21196.0 if t > 8.0 else 0.0)
@@ -408,21 +382,9 @@ class MovingLanding(Node):
                                  self.vel_ned[1] - self.pad_vel_ned[1]))
 
         if int(t * 2) % 4 == 0:
-            ref = getattr(self.predictor, "last_reference", None)
-            if ref is not None:
-                detail = (f"pos=({self.pos_ned[0]:+.1f},{self.pos_ned[1]:+.1f}) "
-                          f"pad=({self.pad_ned[0]:+.1f},{self.pad_ned[1]:+.1f}) "
-                          f"ref=({ref.position[0]:+.1f},{ref.position[1]:+.1f},{ref.position[2]:+.2f}) "
-                          f"rvz={ref.velocity[2]:+.2f}")
-            else:
-                detail = "ref=n/a"
             self.get_logger().info(
-                f"state={self.state} alt={alt:.2f} rel_h={rel_h:.2f} "
-                f"真值(水平={self.true_horiz:.2f} 高于板面={self.true_above:+.2f}) "
-                f"src(fine={'Y' if self.pad_ned_fine is not None else 'N'},"
-                f"gps={'Y' if self.pad_ned_gps is not None else 'N'}) {detail} "
-                f"acc=({self.last_acc[0]:+.2f},{self.last_acc[1]:+.2f},{self.last_acc[2]:+.2f}) "
-                f"landed={self.landed} vrange={self.vision_range if self.vision_range is not None else -1:.2f} armed={self.armed}",
+                f"state={self.state} alt={alt:.2f} pad_alt={pad_alt:.2f} "
+                f"rel_h={rel_h:.2f} rel_v={rel_v:.2f} 真值(水平={self.true_horiz:.2f} 高于板面={self.true_above:+.2f}) armed={self.armed}",
                 throttle_duration_sec=2.0)
 
         # 3) 起飞段：先爬到巡航高度
@@ -438,7 +400,6 @@ class MovingLanding(Node):
         # 3b) 转场：在巡航高度飞向落点板正上方
         if self.state == "transit":
             self.predictor.horizon_s = 0.8
-            self.predictor.z_offset = -self.cruise_alt        # 平台上空
             lead = self.pad_vel_ned * self.lead_time
             target = self.pad_ned + lead + np.array([0.0, 0.0, -self.cruise_alt])
             self._update_gains()
@@ -446,14 +407,12 @@ class MovingLanding(Node):
             self.publish_accel(acc)
             # 用“到提前量目标”的水平距离判定，而不是到板本身
             d_target = float(np.hypot(self.pos_ned[0] - target[0], self.pos_ned[1] - target[1]))
-            if d_target < 2.5 and rel_h < 3.0:
+            if d_target < 0.6:
                 if self.cruise_t == 0.0:
                     self.cruise_t = t
                     self.get_logger().info(
                         f"已到板上方 {alt:.1f} m（水平 {rel_h:.2f} m），保持 {self.cruise_hold_s:.0f} s")
-                if rel_h > 5.0:                      # 明显跑偏才重新计时
-                    self.cruise_t = 0.0
-                elif t - self.cruise_t >= self.cruise_hold_s:
+                if t - self.cruise_t >= self.cruise_hold_s:
                     self.state = "approach"
                     self.get_logger().info(f"开始下降（自 {alt:.1f} m）")
             return
@@ -462,57 +421,24 @@ class MovingLanding(Node):
         if self.state == "approach":
             self.predictor.horizon_s = 0.3
             self.predictor.descent_rate = 0.0
-            # 对准后才下降，并带滞回：小于 0.8 m 置位，大于 3 m 复位，避免在阈值上反复升降
-            if rel_h < 0.8:
-                self.aligned = True
-            elif rel_h > 3.0:
-                self.aligned = False
-            self.predictor.z_offset = -self.clearance if self.aligned else -self.cruise_alt
             target = self.pad_ned + np.array([0.0, 0.0, 0.02])
             self._update_gains()
             acc = self.ctrl.compute_control(self.pos_ned, self.vel_ned, self.history, "tracking")
             self.publish_accel(acc)
-            if (rel_h < 1.0 and self.true_above < self.clearance and rel_v_h < self.vel_gate):
+            if self.true_above < self.clearance and rel_v_h < self.vel_gate:
                 self.state = "descend"
                 self.get_logger().info(f"降到板面上方 {alt - pad_alt:.2f} m（水平 {rel_h:.2f} m），精降")
             return
 
-        # 5) 下降：横向用视觉对准，纵向按固定下降率强制下沉
-        #    飞控的 z 估计会漂（实测差 2 m），所以不拿它当绝对高度用；
-        #    触地判定改用视觉给出的"相机到板距离"
-        if False and self.state == "descend":
-            if not hasattr(self, "sink_alt") or self.sink_alt is None:
-                self.sink_alt = alt
-            floor_alt = -float(self.pad_ned[2]) - 0.05    # 板面高度（PX4 本体系）再往下 5 cm
-            if self.sink_alt > floor_alt:
-                self.sink_alt = max(floor_alt, self.sink_alt - 0.25 * 0.05)
-            self.publish_position(np.array([self.pad_ned[0], self.pad_ned[1], -self.sink_alt]))
-            # 到达下沉下限即认为已在甲板上（近距离标记占满画面，视觉无法再用）
-            at_floor = self.sink_alt <= floor_alt + 1e-3
-            if at_floor and self.floor_since == 0.0:
-                self.floor_since = t
-            elif not at_floor:
-                self.floor_since = 0.0
-            # 只有当视觉距离可信且确实很近时才允许上锁（防止板估计偏差导致提前上锁）
-            nearby = self.vision_range is not None and self.vision_range < 1.0
-            if (self.floor_since and t - self.floor_since > 0.5 and nearby) or \
-                    (self.vision_range is not None and self.vision_range < 0.42):
-                self.state = "landed"
-                self.finished = True
-                self.send_cmd(CMD_ARM_DISARM, 0.0, 21196.0)
-                self.get_logger().info(
-                    f"视觉触地（相机到板 {self.vision_range:.2f} m，"
-                    f"真值水平 {self.true_horiz:.2f} m）→ 上锁")
-            return
-
-        # 5) 下降：加速度控制（回到验证过的版本）
+        # 5) 下降：用 touchdown 阶段（位置/速度权重加倍，动作更果断）
+        #    参考速度 = 甲板速度 + 0.5 m/s 下降前馈，不靠误差慢慢“挤”下去
         if self.state == "descend":
             target = self.pad_ned + np.array([0.0, 0.0, 0.02])
             ref_vel = self.pad_vel_ned + np.array([0.0, 0.0, self.descent_rate])
             self._update_gains()
             acc = self.ctrl.compute_control(self.pos_ned, self.vel_ned, self.history, "touchdown")
             self.publish_accel(acc)
-            if rel_h > 1.0:                     # 只有明显偏出才回到进场，避免抖动
+            if rel_h > 0.35:
                 self.state = "approach"
                 self.get_logger().info(f"下降中横向偏出 {rel_h:.2f} m，回到进场段重新对准")
                 return
@@ -531,7 +457,6 @@ class MovingLanding(Node):
             target = self.pad_ned + np.array([0.0, 0.0, -0.02])   # 板面之上 2 cm
             ref_vel = self.pad_vel_ned                              # 不再压下去
             self.predictor.descent_rate = 0.15
-            self.predictor.z_offset = -0.03
             self.predictor.horizon_s = 0.0
             self._update_gains()
             acc = self.ctrl.compute_control(self.pos_ned, self.vel_ned, self.history, "touchdown")
