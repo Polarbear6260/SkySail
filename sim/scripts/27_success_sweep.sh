@@ -3,7 +3,8 @@
 # 用法：./scripts/27_success_sweep.sh [次数]
 set -uo pipefail
 cd "$(dirname "$0")/.."
-N="${1:-6}"
+N="${1:-6}"; shift || true
+EXTRA=("$@")
 OUT="logs/success-sweep-$(date +%Y%m%d-%H%M%S).csv"
 echo "run,result,above_pad_m,horiz_m,time_s,log" > "$OUT"
 
@@ -15,7 +16,7 @@ for i in $(seq 1 "$N"); do
   sleep 3; rm -f /tmp/px4_lock-0
 
   LOG="logs/sweep-$i.log"
-  ./scripts/16_moving_landing_demo.sh --no-gui --no-record --timeout 100 > "$LOG" 2>&1
+  ./scripts/16_moving_landing_demo.sh --no-gui --no-record --timeout 100 "${EXTRA[@]}" > "$LOG" 2>&1
   sleep 3
 
   LINE=$(grep -a "TOUCHDOWN 成功" "$LOG" | tail -1)

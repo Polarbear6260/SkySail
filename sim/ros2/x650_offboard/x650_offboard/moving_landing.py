@@ -89,6 +89,7 @@ class MovingLanding(Node):
         self.declare_parameter("approach_clearance", 0.5)   # 进场时板面上方高度
         self.declare_parameter("gz_world", "x650_sea")
         self.declare_parameter("origin_enu", "0,16,1.02")   # 起飞点世界坐标 = PX4 本地原点
+        self.declare_parameter("approach_mode", "staged")   # staged=分段高度 / pure=算法自己决定
         self.declare_parameter("cruise_alt", 10.0)        # 巡航高度（相对落点板）
         self.declare_parameter("local_z_offset", 0.0)   # PX4 本地原点=GPS 世界原点，无需偏移   # 出生点世界高度 = EKF 原点
         self.declare_parameter("cruise_hold_s", 3.0)   # 巡航高度保持多久再下降
@@ -109,6 +110,9 @@ class MovingLanding(Node):
         self.vel_gate = float(self.get_parameter("vel_gate").value)
         self.z_offset = float(self.get_parameter("local_z_offset").value)
         self.cruise_alt = float(self.get_parameter("cruise_alt").value)
+        mode = str(self.get_parameter("approach_mode").value)
+        self.pure = mode == "pure"
+        self.get_logger().info(f"进场模式 approach_mode={mode}")
         ox, oy, oz = (float(v) for v in str(self.get_parameter("origin_enu").value).split(","))
         self.origin_enu = np.array([ox, oy, oz])
         self.cruise_hold_s = float(self.get_parameter("cruise_hold_s").value)
@@ -407,12 +411,23 @@ class MovingLanding(Node):
         # 3b) 转场：在巡航高度飞向落点板正上方
         if self.state == "transit":
             self.predictor.horizon_s = 0.8
+            # pure：参考就是落点本身，高度由 LQR 自己收敛（"算法全程接管"）
+            self.predictor.z_offset = 0.0 if self.pure else -self.cruise_alt
             lead = self.pad_vel_ned * self.lead_time
             target = self.pad_ned + lead + np.array([0.0, 0.0, -self.cruise_alt])
             self._update_gains()
             acc = self.ctrl.compute_control(self.pos_ned, self.vel_ned, self.history, "tracking")
             self.publish_accel(acc)
             # 用“到提前量目标”的水平距离判定，而不是到板本身
+            if self.pure:
+                # 不分段：贴到板面附近就直接进入末端压紧，全程由算法决定高度
+                if self.true_above < 0.25 and rel_v_h < self.vel_gate:
+                    self.state = "settle"
+                    self.settle_start = t
+                    self.get_logger().info(
+                        f"[pure] 进入末端压紧（高于板面 {self.true_above:+.2f} m，"
+                        f"水平 {self.true_horiz:.2f} m）")
+                return
             d_target = float(np.hypot(self.pos_ned[0] - target[0], self.pos_ned[1] - target[1]))
             if d_target < 0.6:
                 if self.cruise_t == 0.0:
@@ -427,6 +442,7 @@ class MovingLanding(Node):
         # 4) 进场：从巡航高度下降，目标 = 板面
         if self.state == "approach":
             self.predictor.horizon_s = 0.3
+            self.predictor.z_offset = -self.clearance       # 板上方 0.5 m
             self.predictor.descent_rate = 0.0
             target = self.pad_ned + np.array([0.0, 0.0, 0.02])
             self._update_gains()
@@ -441,6 +457,7 @@ class MovingLanding(Node):
         #    参考速度 = 甲板速度 + 0.5 m/s 下降前馈，不靠误差慢慢“挤”下去
         if self.state == "descend":
             target = self.pad_ned + np.array([0.0, 0.0, 0.02])
+            self.predictor.z_offset = -0.02                 # 贴板
             ref_vel = self.pad_vel_ned + np.array([0.0, 0.0, self.descent_rate])
             self._update_gains()
             acc = self.ctrl.compute_control(self.pos_ned, self.vel_ned, self.history, "touchdown")
