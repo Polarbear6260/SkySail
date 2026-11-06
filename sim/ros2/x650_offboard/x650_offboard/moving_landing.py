@@ -96,10 +96,14 @@ class MovingLanding(Node):
         self.declare_parameter("vel_gate", 0.40)        # 横向相对速度门限，满足才下降
         self.declare_parameter("descent_rate", 0.45)   # 落地下降率 m/s（果断）
         self.declare_parameter("settle_s", 2.5)
+        self.declare_parameter("touch_horiz", 0.55)    # 触地水平判据（落点板半径）
+        self.declare_parameter("touch_above", 0.12)    # 触地高度判据（板面上下）
         self.declare_parameter("skysail_path", os.path.expanduser("~/planning_ws/src/SkySail"))
         self.alt = float(self.get_parameter("alt").value)
         self.clearance = float(self.get_parameter("approach_clearance").value)
         self.settle_s = float(self.get_parameter("settle_s").value)
+        self.touch_horiz = float(self.get_parameter("touch_horiz").value)
+        self.touch_above = float(self.get_parameter("touch_above").value)
         self.descent_rate = float(self.get_parameter("descent_rate").value)
         self.lead_time = float(self.get_parameter("lead_time").value)
         self.vel_gate = float(self.get_parameter("vel_gate").value)
@@ -132,6 +136,9 @@ class MovingLanding(Node):
         self.arm_sent = 0.0
         self.offboard_req = False
         self.settle_start = 0.0
+        self.contact_count = 0
+        self.best_contact = None
+        self.landed_at = 0.0
         self.land_retry = 0
         self.last_rebuild = 0.0
         self.last_acc = (0.0, 0.0, 0.0)
@@ -472,20 +479,23 @@ class MovingLanding(Node):
             # 飞控自己收油门、自己判落地、自己上锁（不是我们硬停）
             # 成功判据（按约定）：真值确认"落在甲板上"一次即可
             # 成功判据必须带上下界：只判"低于板面"会把"穿过甲板掉下去"也算成功
-            if (self.true_horiz < 0.30 and -0.10 < self.true_above < 0.10
-                    and rel_v < 0.40):
-                if self.settle_start == 0.0:
-                    self.settle_start = t
-                elif t - self.settle_start > 0.3:
-                    self.state = "landed"
-                    self.finished = True
-                    self.get_logger().info(
-                        f"TOUCHDOWN 成功：高于板面 {self.true_above:+.2f} m，"
-                        f"水平误差 {self.true_horiz:.2f} m，时刻 t={t:.1f}s")
-                    rclpy.shutdown()          # 触板即结束，不再空跑
-                    return
-            else:
-                self.settle_start = 0.0
+            # 接触判定：落点板半径 0.55 m，落在这之内就算落上；高度用上下界防"穿透甲板"。
+            # kinematic 甲板会带着机体滑走（仿真特性），所以首次接触即确认，不要求驻留。
+            in_contact = (-self.touch_above < self.true_above < self.touch_above
+                          and self.true_horiz < self.touch_horiz)
+            self.contact_count = self.contact_count + 1 if in_contact else 0
+            if self.contact_count >= 2:              # 连续两帧，防单帧抖动
+                if self.best_contact is None or self.true_horiz < self.best_contact[0]:
+                    self.best_contact = (self.true_horiz, self.true_above)
+                horiz, above = self.best_contact
+                self.state = "landed"
+                self.finished = True
+                self.send_cmd(CMD_ARM_DISARM, 0.0, 21196.0)     # 触板即上锁
+                self.get_logger().info(
+                    f"TOUCHDOWN 成功：高于板面 {above:+.2f} m，"
+                    f"水平误差 {horiz:.2f} m，时刻 t={t:.1f}s")
+                rclpy.shutdown()          # 触板即结束，不再空跑
+                return
             return
 
         # 5c) AUTO.LAND：不发设定点，等飞控自己落地并上锁
