@@ -25,7 +25,7 @@ AGENT_BIN="${AGENT_BIN:-$HOME/tools/Micro-XRCE-DDS-Agent/build2/MicroXRCEAgent}"
 SKYSAIL="${SKYSAIL:-$HOME/planning_ws/src/SkySail}"
 WX650="${WX650:-$HOME/x650_ws}"
 
-GUI=1; RECORD=1; DASHBOARD=0; PERCEPTION=""; PERCEPTION_SEED=""; GPS_COARSE=""; VISION=0; RENDER_ENGINE="${RENDER_ENGINE:-}" SHIP_SPEED="${SHIP_SPEED:-1.5}"; SHIP_START_X="${SHIP_START_X:--40}"; SHIP_DELAY="${SHIP_DELAY:-12}"; TIMEOUT=150
+GUI=1; RECORD=1; DASHBOARD=0; PERCEPTION=""; PERCEPTION_SEED=""; GPS_COARSE=""; VISION=0; TRAJ=0; RENDER_ENGINE="${RENDER_ENGINE:-ogre}" SHIP_SPEED="${SHIP_SPEED:-1.5}"; SHIP_START_X="${SHIP_START_X:--40}"; SHIP_DELAY="${SHIP_DELAY:-12}"; TIMEOUT=150
 DOCK_X=0; DOCK_Y=16; DOCK_Z=1.02          # 起飞台台面（与 world 中的 dock 一致）
 CRUISE_ALT=10
 
@@ -37,7 +37,8 @@ while [ $# -gt 0 ]; do
     --perception) PERCEPTION="$2"; shift ;;   # "延迟s,位置噪声m,丢帧概率"
     --perception-seed) PERCEPTION_SEED="$2"; shift ;;
     --gps-coarse) GPS_COARSE="$2"; shift ;;   # "噪声m,跳变概率"
-    --vision) VISION=1; RENDER_ENGINE="ogre" ;;  # 用 ArUco 视觉当精定位
+    --traj) TRAJ=1 ;;
+    --vision) VISION=1 ;;                # 用 ArUco 视觉当精定位（相机画面默认已有）
     --ship-speed) SHIP_SPEED="$2"; shift ;;
     --ship-start-x) SHIP_START_X="$2"; shift ;;
     --timeout) TIMEOUT="$2"; shift ;;
@@ -143,6 +144,10 @@ set +u; source /opt/ros/jazzy/setup.bash; source "$WX650/install/setup.bash"; se
 export PYTHONPATH="/usr/lib/python3/dist-packages:${PYTHONPATH:-}"
 setsid nohup python3 "$WS/scripts/25_z_drift_check.py" --duration $((TIMEOUT + 10)) \
   --csv "$WS/logs/z_drift-$TS.csv" > "$WS/logs/zdrift-$TS.log" 2>&1 &
+if [ "${TRAJ:-0}" = "1" ]; then
+  setsid nohup python3 "$WS/scripts/28_traj_record.py" --duration $((TIMEOUT + 10)) \
+    --csv "$WS/logs/traj-$TS.csv" > "$WS/logs/traj-$TS.log" 2>&1 &
+fi
 setsid nohup python3 "$WS/scripts/12_log_pose.py" --world x650_sea --duration $((TIMEOUT + 20)) \
   --csv "$WS/logs/pose-$TS.csv" > "$WS/logs/pose-$TS.log" 2>&1 &
 SHIP_ARGS=()
